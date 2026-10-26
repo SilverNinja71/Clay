@@ -186,14 +186,16 @@ public struct ExtrudeParameters: Codable, Equatable, Sendable {
     public var sketch: UUID
     public var depth: Float
     public var symmetric: Bool = true
-    public init(sketch: UUID, depth: Float) { self.sketch = sketch; self.depth = depth }
+    /// Only these paths (nil = every closed path in the sketch).
+    public var paths: [UUID]?
+    public init(sketch: UUID, depth: Float, paths: [UUID]? = nil) { self.sketch = sketch; self.depth = depth; self.paths = paths }
 }
 
 /// Linear extrusion of closed sketch loops along the plane normal (a prism, capped with ear clipping).
 public enum ExtrudeEngine {
     public static func extrude(sketch: Sketch, plane: SketchPlane, parameters p: ExtrudeParameters) -> ClayMesh? {
         var mesh = ClayMesh.empty
-        for path in sketch.paths where path.closed && path.anchors.count >= 2 {
+        for path in sketch.paths where path.closed && path.anchors.count >= 2 && (p.paths?.contains(path.id) ?? true) {
             var poly = path.polyline(samplesPerSegment: 16)
             if signedArea(poly) < 0 { poly.reverse() }
             guard poly.count >= 3, let tris = earClip(poly) else { continue }

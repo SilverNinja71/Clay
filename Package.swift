@@ -14,7 +14,8 @@ let package = Package(
     ],
     targets: [
         .target(name: "ClayKit", path: "Sources/ClayKit"),
-        .executableTarget(name: "ClayMac", dependencies: ["ClayKit"], path: "Sources/ClayMac"),
+        .executableTarget(name: "ClayMac", dependencies: ["ClayKit"], path: "Sources/ClayMac",
+                          swiftSettings: [.unsafeFlags(["-parse-as-library"])]),
         .executableTarget(name: "ClaySnapshots", dependencies: ["ClayKit"], path: "Sources/ClaySnapshots"),
         .testTarget(name: "ClayKitTests", dependencies: ["ClayKit"], path: "Tests/ClayKitTests"),
     ]

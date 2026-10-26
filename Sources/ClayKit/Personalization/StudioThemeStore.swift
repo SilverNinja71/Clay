@@ -117,6 +117,7 @@ public struct FloatingPanel: ViewModifier {
             .background(theme.panel.color, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(theme.panelStroke.color, lineWidth: 1))
             .shadow(color: .black.opacity(theme.isDark ? 0.35 : 0.12), radius: 14, y: 6)
+            .environment(\.colorScheme, theme.isDark ? .dark : .light)
     }
 }
 

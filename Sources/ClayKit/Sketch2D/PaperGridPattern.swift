@@ -44,12 +44,16 @@ public struct SketchViewTransform: Equatable, Sendable {
         center.y += Float(dy / scale)
     }
 
-    /// Fits a plane rectangle (with margin) into the view.
-    public static func fitting(min lo: Vec2, max hi: Vec2, size: CGSize) -> SketchViewTransform {
+    /// Fits a plane rectangle into the part of the view not covered by floating chrome.
+    public static func fitting(min lo: Vec2, max hi: Vec2, size: CGSize,
+                               insets: (top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat) = (0, 0, 0, 0)) -> SketchViewTransform {
         var t = SketchViewTransform()
         let w = max(hi.x - lo.x, 40), h = max(hi.y - lo.y, 40)
-        t.center = (lo + hi) / 2
-        t.scale = min(size.width / CGFloat(w), size.height / CGFloat(h)) * 0.72
+        let aw = max(size.width - insets.left - insets.right, 120), ah = max(size.height - insets.top - insets.bottom, 120)
+        t.scale = min(aw / CGFloat(w), ah / CGFloat(h)) * 0.88
+        let mid = (lo + hi) / 2
+        let cx = insets.left + aw / 2, cy = insets.top + ah / 2
+        t.center = Vec2(mid.x - Float((cx - size.width / 2) / t.scale), mid.y + Float((cy - size.height / 2) / t.scale))
         return t
     }
 }

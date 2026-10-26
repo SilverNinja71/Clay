@@ -165,7 +165,7 @@ enum SculptKernels {
                 guard w > 0 else { continue }
                 let dist = simd_dot(p - planePoint, n)
                 if (sign > 0 && dist < 0) || (sign < 0 && dist > 0) {
-                    mesh.positions[v] = p - n * (dist * w * min(1, 0.5 + s * 0.5))
+                    mesh.positions[v] = p - n * (dist * w * (0.12 + 0.38 * s))
                 }
             }
 

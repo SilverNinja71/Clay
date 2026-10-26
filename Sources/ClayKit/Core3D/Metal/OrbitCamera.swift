@@ -107,7 +107,7 @@ public struct OrbitCamera: Equatable, Codable, Sendable {
         c.orthographic = v.isOrthographic
         if let b = bounds, !b.isEmpty {
             c.target = b.center
-            c.distance = max(b.radius, 20) * 2.9
+            c.distance = max(b.radius, 20) * 4.0
         }
         return c
     }
@@ -117,7 +117,7 @@ public struct OrbitCamera: Equatable, Codable, Sendable {
         var c = self
         guard !bounds.isEmpty else { return c }
         c.target = bounds.center
-        c.distance = max(bounds.radius, 20) * 2.9
+        c.distance = max(bounds.radius, 20) * 4.0
         return c
     }
 }
