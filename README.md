@@ -8,6 +8,7 @@ Blender-style brushes, then drive exact dimensions Fusion-style through a non-de
 ## Status (work in progress)
 
 The geometry engine and the Metal renderer are done and tested. The app's screens are next.
+The original brief is in [`docs/SPEC.md`](docs/SPEC.md); the build plan for what remains is in [`CLAUDE.md`](CLAUDE.md).
 
 | Area | State |
 |---|---|
