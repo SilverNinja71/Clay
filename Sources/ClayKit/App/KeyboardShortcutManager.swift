@@ -120,6 +120,7 @@ public enum BlenderKeymap {
         case .sketch:
             switch (c, k.shift) {
             case ("p", false): return .sketchTool(.pencil)
+            case ("p", true): return .sketchTool(.pen)
             case ("l", false): return .sketchTool(.line)
             case ("c", false): return .sketchTool(.circle)
             case ("b", false): return .sketchTool(.rectangle)

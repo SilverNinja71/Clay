@@ -95,7 +95,7 @@ struct ToolPalette: View {
             case .sketch:
                 ForEach(SketchTool.allCases) { t in
                     ToolButton(symbol: t.symbol, label: "\(t.title) (\(t.hotkey))", isOn: state.sketchTool == t, theme: theme) {
-                        state.sketchTool = t; state.livePolyline = []
+                        state.selectSketchTool(t)
                     }
                 }
                 divider
@@ -318,7 +318,8 @@ struct ShortcutSheet: View {
         ("Sculpt: ⇧C ⇧K ⇧T ⇧S", "Clay Strips, Crease, Flatten, Scrape"),
         ("Sculpt: [ ]  ⇧[ ⇧]", "Brush radius · strength"),
         ("Sculpt: hold ⇧ / Ctrl", "Smooth / invert while stroking"),
-        ("Sketch: P L C B V D", "Pencil, Line, Circle, Rectangle, Edit, Dimension"),
+        ("Sketch: P ⇧P L C B V D", "Pencil, Pen, Line, Circle, Rectangle, Edit, Dimension"),
+        ("Pen: click / drag", "Corner point / curve point · click the first point to close · ⏎ to finish · ⌥-drag breaks the handle"),
     ]
 
     var body: some View {

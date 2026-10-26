@@ -143,7 +143,7 @@ public enum SketchPlane: String, Codable, CaseIterable, Sendable {
 
 /// A continuous sketched curve (open or closed loop).
 public struct SketchPath: Codable, Equatable, Identifiable, Sendable {
-    public enum Kind: String, Codable, Sendable { case freehand, polyline, circle, rectangle }
+    public enum Kind: String, Codable, Sendable { case freehand, pen, polyline, circle, rectangle }
 
     public var id: UUID
     public var anchors: [BezierAnchor]

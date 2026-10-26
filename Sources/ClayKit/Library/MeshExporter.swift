@@ -139,6 +139,47 @@ public enum MeshExporter {
         return Data(out.utf8)
     }
 
+    // MARK: Clean vector SVG
+
+    /// Just the sketch curves as exact cubic Bézier paths, 1:1 in millimetres — no paper, labels
+    /// or dimensions. Each plane is its own group, laid out left to right on a shared baseline.
+    public static func vectorSVG(_ sketches: [(SketchPlane, Sketch)], name: String) -> Data? {
+        let used = sketches.filter { !$0.1.isEmpty && $0.1.bounds != nil }
+        guard !used.isEmpty else { return nil }
+        let margin: Float = 2, gap: Float = 20
+        let top = used.map { $0.1.bounds!.max.y }.max()!
+        let bottom = used.map { $0.1.bounds!.min.y }.min()!
+        var x = margin
+        var groups: [String] = []
+        for (plane, sketch) in used {
+            let b = sketch.bounds!
+            let dx = x - b.min.x
+            func pt(_ p: Vec2) -> String { String(format: "%.3f %.3f", p.x + dx, top - p.y + margin) }
+            var paths: [String] = []
+            for path in sketch.paths {
+                guard let first = path.anchors.first else { continue }
+                var d = "M\(pt(first.position))"
+                for seg in path.segments { d += " C\(pt(seg.p1)) \(pt(seg.p2)) \(pt(seg.p3))" }
+                if path.closed { d += " Z" }
+                paths.append("    <path d=\"\(d)\"/>")
+            }
+            groups.append("  <g id=\"\(plane.rawValue)\">\n\(paths.joined(separator: "\n"))\n  </g>")
+            x += (b.max.x - b.min.x) + gap
+        }
+        let w = x - gap + margin, h = top - bottom + margin * 2
+        let title = name.replacingOccurrences(of: "&", with: "and").replacingOccurrences(of: "<", with: "")
+        let svg = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <svg xmlns="http://www.w3.org/2000/svg" width="\(String(format: "%.2f", w))mm" height="\(String(format: "%.2f", h))mm" viewBox="0 0 \(String(format: "%.3f", w)) \(String(format: "%.3f", h))">
+        <title>\(title)</title>
+        <g fill="none" stroke="#000000" stroke-width="0.35" stroke-linecap="round" stroke-linejoin="round">
+        \(groups.joined(separator: "\n"))
+        </g>
+        </svg>
+        """
+        return Data(svg.utf8)
+    }
+
     // MARK: SVG drawing sheet
 
     /// Front and side elevations side by side, at 1:1 in millimetres, with key dimensions.

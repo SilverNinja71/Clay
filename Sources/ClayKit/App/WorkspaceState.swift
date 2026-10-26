@@ -27,11 +27,12 @@ public enum WorkspaceMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum SketchTool: String, CaseIterable, Identifiable, Sendable {
-    case pencil, line, circle, rectangle, edit, eraser, dimension
+    case pencil, pen, line, circle, rectangle, edit, eraser, dimension
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .pencil: "Pencil"
+        case .pen: "Pen"
         case .line: "Line"
         case .circle: "Circle"
         case .rectangle: "Rectangle"
@@ -43,6 +44,7 @@ public enum SketchTool: String, CaseIterable, Identifiable, Sendable {
     public var symbol: String {
         switch self {
         case .pencil: "pencil.tip"
+        case .pen: "pencil.tip.crop.circle.badge.plus"
         case .line: "line.diagonal"
         case .circle: "circle"
         case .rectangle: "rectangle"
@@ -53,7 +55,7 @@ public enum SketchTool: String, CaseIterable, Identifiable, Sendable {
     }
     public var hotkey: String {
         switch self {
-        case .pencil: "P"; case .line: "L"; case .circle: "C"; case .rectangle: "B"
+        case .pencil: "P"; case .pen: "⇧P"; case .line: "L"; case .circle: "C"; case .rectangle: "B"
         case .edit: "V"; case .eraser: "E"; case .dimension: "D"
         }
     }
@@ -114,6 +116,7 @@ public struct SketchSelection: Equatable, Sendable {
     public var plane: SketchPlane
     public var pathID: UUID
     public var anchors: [Int] = []
+    public init(plane: SketchPlane, pathID: UUID, anchors: [Int] = []) { self.plane = plane; self.pathID = pathID; self.anchors = anchors }
 }
 
 public struct ShapeDrag: Equatable, Sendable {
@@ -195,6 +198,8 @@ public final class WorkspaceState {
     public var liveStroke: [Vec2] = []
     public var livePlane: SketchPlane = .front
     public var livePolyline: [Vec2] = []
+    /// Anchors of the curve being placed with the pen tool.
+    public var livePen: [BezierAnchor] = []
     public var liveShape: ShapeDrag?
     public var sketchHover: Vec2?
     public var statusText = ""
@@ -307,7 +312,7 @@ public final class WorkspaceState {
     func cancelTransientState() {
         modal = nil
         radialMenu = nil
-        liveStroke = []; livePolyline = []; liveShape = nil
+        liveStroke = []; livePolyline = []; livePen = []; liveShape = nil
         viewportDrag = nil; sketchDrag = nil
         editingCallout = nil
     }
@@ -390,7 +395,7 @@ public final class WorkspaceState {
         if modal != nil { modal = nil }
         radialMenu = nil
         editingCallout = nil
-        liveStroke = []; livePolyline = []; liveShape = nil
+        liveStroke = []; livePolyline = []; livePen = []; liveShape = nil
         if m == .sculpt {
             guard enterSculpt() else { return }
         } else if mode == .sculpt {
@@ -422,6 +427,7 @@ public final class WorkspaceState {
 
     public func setPlane(_ p: SketchPlane) {
         guard p != .top else { return }
+        finishPen(closed: false)
         sketchSelection = nil
         livePolyline = []
         activePlane = p
@@ -854,11 +860,11 @@ public final class WorkspaceState {
         case .remesh: remesh()
         case .toggleWireframe: showWireframe.toggle()
         case .toggleInspector: showInspector.toggle()
-        case .sketchTool(let t): sketchTool = t; livePolyline = []
-        case .finishShape: finishPolyline(closed: false)
+        case .sketchTool(let t): selectSketchTool(t)
+        case .finishShape: finishPolyline(closed: false); finishPen(closed: false)
         case .measureTool: dimensionTool = dimensionTool == .measure ? .inspect : .measure
         case .cancel:
-            if !livePolyline.isEmpty { livePolyline = [] }
+            if !livePolyline.isEmpty || !livePen.isEmpty { livePolyline = []; livePen = [] }
             else if radialMenu != nil { radialMenu = nil }
             else if editingCallout != nil { editingCallout = nil }
             else { sketchSelection = nil; bodySelected = false; selectedFeatureID = nil; pendingDimensionAnchors = [] }

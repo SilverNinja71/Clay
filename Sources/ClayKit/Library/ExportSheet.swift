@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 public enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
-    case stl, obj, usdz, step, svg, clay
+    case stl, obj, usdz, step, vector, svg, clay
     public var id: String { rawValue }
     public var title: String {
         switch self {
@@ -10,6 +10,7 @@ public enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
         case .obj: "OBJ"
         case .usdz: "USDZ"
         case .step: "STEP"
+        case .vector: "Vector curves (SVG)"
         case .svg: "Drawing sheet (SVG)"
         case .clay: "Clay project"
         }
@@ -20,6 +21,7 @@ public enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
         case .obj: "Blender, Maya, game engines. Positions and normals."
         case .usdz: "AR Quick Look, Reality Composer, Keynote. Real-world scale."
         case .step: "Fusion, SolidWorks, FreeCAD — as a faceted solid (flat triangles, not NURBS)."
+        case .vector: "Only your sketch curves as clean Bézier paths at real size — for Illustrator, Inkscape, Figma, Cricut or a laser cutter."
         case .svg: "Front and side elevations at 1:1 with dimensions — a Parchment-style sketch sheet."
         case .clay: "The full editable project: sketches, timeline, sculpt layers."
         }
@@ -30,11 +32,13 @@ public enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
         case .obj: "cube"
         case .usdz: "arkit"
         case .step: "gearshape.2"
+        case .vector: "scribble.variable"
         case .svg: "doc.richtext"
         case .clay: "shippingbox"
         }
     }
-    var needsMesh: Bool { self != .svg && self != .clay }
+    var needsMesh: Bool { self != .svg && self != .vector && self != .clay }
+    var fileExtension: String { self == .vector || self == .svg ? "svg" : rawValue }
 }
 
 struct ExportFile: FileDocument {
@@ -104,12 +108,16 @@ struct ExportSheet: View {
         error = nil
         do {
             var data = Data()
-            var ext = f.rawValue
+            var ext = f.fileExtension
             switch f {
             case .stl: data = MeshExporter.stl(state.mesh!, name: name)
             case .obj: data = MeshExporter.obj(state.mesh!, name: name)
             case .usdz: (data, ext) = try MeshExporter.usd(state.mesh!, name: name, color: theme.clay.linear)
             case .step: data = MeshExporter.step(state.mesh!, name: name)
+            case .vector:
+                let planes: [(SketchPlane, Sketch)] = [SketchPlane.front, .side].compactMap { p in state.timeline.sketch(p).map { (p, $0) } }
+                guard let svg = MeshExporter.vectorSVG(planes, name: name) else { error = "Draw something in Sketch mode first."; return }
+                data = svg
             case .svg:
                 guard let front = state.timeline.sketch(.front), !front.isEmpty else { error = "Draw a front sketch first."; return }
                 data = MeshExporter.drawingSheet(front: front, side: state.timeline.sketch(.side).flatMap { $0.isEmpty ? nil : $0 }, name: name, units: state.units)

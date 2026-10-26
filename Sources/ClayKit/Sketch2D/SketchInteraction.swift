@@ -10,6 +10,7 @@ enum SketchDrag {
     case path(pathID: UUID, last: Vec2, started: Bool)
     case pan(last: CGPoint)
     case erase(started: Bool)
+    case pen(index: Int, closing: Bool)
 }
 
 /// Sketch-plane editing: drawing tools, point editing, constraints and sketch view navigation.
@@ -140,6 +141,8 @@ extension WorkspaceState {
         case .pencil:
             liveStroke = [p]
             sketchDrag = .freehand
+        case .pen:
+            penDown(p, snapR: snapR, event: e)
         case .line:
             var q = snapToAxis(p, snapR)
             if e.modifiers.contains(.shift), let last = livePolyline.last { q = orthoSnap(q, from: last) }
@@ -180,6 +183,8 @@ extension WorkspaceState {
             sketchDrag = .path(pathID: pid, last: p, started: true)
         case .erase?:
             erase(at: p, plane: plane, snapR: snapR)
+        case .pen(let i, let closing)?:
+            penDrag(i, to: p, closing: closing, snapR: snapR, breakHandle: e.modifiers.contains(.option))
         default:
             break
         }
@@ -204,6 +209,8 @@ extension WorkspaceState {
                 path = .rectangle(s.start, s.end)
             }
             addPath(path, plane: plane)
+        case .pen(_, let closing)?:
+            if closing && !cancelled { finishPen(closed: true) }
         case .anchor(_, _, _, true)?, .path(_, _, true)?:
             // Re-solve constraints after a manual edit.
             if !(timeline.sketch(plane)?.constraints.isEmpty ?? true) {
@@ -269,6 +276,62 @@ extension WorkspaceState {
         sketchSelection = SketchSelection(plane: plane, pathID: newPath.id)
         hapticTick += 1
         tutorial?.handle(.sketchCommitted(plane), in: self)
+    }
+
+    // MARK: Pen tool
+
+    /// Click = corner point, click-and-drag = smooth point with handles, click the first point to close.
+    private func penDown(_ p: Vec2, snapR: Float, event e: PointerEvent) {
+        var q = snapToAxis(p, snapR)
+        if e.modifiers.contains(.shift), let last = livePen.last?.position { q = angleSnap(q, from: last) }
+        if livePen.count >= 2, simd_distance(q, livePen[0].position) < snapR {
+            sketchDrag = .pen(index: 0, closing: true)
+            return
+        }
+        if e.clickCount >= 2 && !livePen.isEmpty {
+            // Double-click ends an open curve (the first click of the pair already placed the point).
+            finishPen(closed: false)
+            return
+        }
+        livePen.append(BezierAnchor(q))
+        sketchDrag = .pen(index: livePen.count - 1, closing: false)
+    }
+
+    private func penDrag(_ i: Int, to p: Vec2, closing: Bool, snapR: Float, breakHandle: Bool) {
+        guard i < livePen.count else { return }
+        let d = p - livePen[i].position
+        guard simd_length(d) > snapR * 0.15 else { return }
+        if closing {
+            // Dragging on the start point shapes the closing curve.
+            livePen[0].inHandle = -d
+            if !breakHandle { livePen[0].outHandle = d }
+        } else {
+            livePen[i].outHandle = d
+            if !breakHandle { livePen[i].inHandle = -d }
+        }
+    }
+
+    public func finishPen(closed: Bool) {
+        let anchors = livePen
+        livePen = []
+        guard anchors.count >= 2 else { return }
+        addPath(SketchPath(anchors: anchors, closed: closed, kind: .pen), plane: livePlane)
+    }
+
+    /// Switches sketch tools, keeping any curve that was being drawn.
+    public func selectSketchTool(_ t: SketchTool) {
+        if t != .pen { finishPen(closed: false) }
+        if t != .line { finishPolyline(closed: false) }
+        sketchTool = t
+    }
+
+    private func angleSnap(_ p: Vec2, from a: Vec2) -> Vec2 {
+        let d = p - a
+        let len = simd_length(d)
+        guard len > 0 else { return p }
+        let step = Float.pi / 4
+        let ang = (atan2(d.y, d.x) / step).rounded() * step
+        return a + Vec2(cos(ang), sin(ang)) * len
     }
 
     // MARK: Shapes

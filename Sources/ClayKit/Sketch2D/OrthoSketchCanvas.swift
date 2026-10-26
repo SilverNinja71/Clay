@@ -124,6 +124,26 @@ public struct OrthoSketchCanvas: View {
                     ctx.fill(Path(ellipseIn: CGRect(x: q.x - 3.5, y: q.y - 3.5, width: 7, height: 7)), with: .color(theme.accent.color))
                 }
             }
+            if !state.livePen.isEmpty {
+                let pen = SketchPath(anchors: state.livePen, closed: false, kind: .pen)
+                ctx.stroke(bezierPath(pen, v), with: .color(theme.accent.color),
+                           style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
+                // Preview of the next segment, unless a handle is being dragged right now.
+                var dragging = false
+                if case .pen? = state.sketchDrag { dragging = true }
+                if !dragging, let h = state.sketchHover, let last = state.livePen.last {
+                    var rb = Path()
+                    rb.move(to: v(last.position))
+                    rb.addCurve(to: v(h), control1: v(last.position + last.outHandle), control2: v(h))
+                    ctx.stroke(rb, with: .color(theme.accent.color.opacity(0.55)), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                }
+                drawAnchors(&ctx, pen, v, showHandles: true, selected: [state.livePen.count - 1])
+                if state.livePen.count >= 2, let h = state.sketchHover,
+                   simd_distance(h, state.livePen[0].position) < Float(12 / t.scale) {
+                    let q = v(state.livePen[0].position)
+                    ctx.stroke(Path(ellipseIn: CGRect(x: q.x - 10, y: q.y - 10, width: 20, height: 20)), with: .color(theme.accent.color), lineWidth: 2)
+                }
+            }
             if let s = state.liveShape {
                 let shape: SketchPath = state.sketchTool == .circle
                     ? .circle(center: s.start, radius: max(simd_distance(s.start, s.end), 0.01))

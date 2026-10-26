@@ -19,7 +19,7 @@ describes features, controls and known limits.
 
 ```bash
 swift build
-swift test                                  # 24 Swift Testing tests
+swift test                                  # 28 Swift Testing tests
 swift build -c release --product ClaySnapshots && .build/release/ClaySnapshots <dir>
 Scripts/build-app.sh                        # Clay.app (do not `open` it while testing)
 ```

@@ -20,27 +20,13 @@ func writePNG(_ img: CGImage, to url: URL) {
 
 // `ClaySnapshots --icon <file.png>`: renders the 1024×1024 app icon (used by Scripts/build-app.sh).
 if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--icon" {
-    let vase = try LoftEngine.loft(front: VaseGuide.frontSketch, side: VaseGuide.sideSketch,
-                                   parameters: LoftParameters(frontSketch: UUID(), sideSketch: UUID()))
-    let body = MeshOperations.shell(vase, parameters: ShellParameters(thickness: 3))
-    var scene = RenderScene()
-    scene.mesh = body
-    scene.showGrid = false
-    var cam = OrbitCamera.preset(.threeQuarter, framing: body.bounds)
-    cam.pitch = 0.42
-    cam.distance *= 0.86
-    scene.camera = cam
-    var palette = StudioTheme.ceramic.palette
-    palette.bgTop = RGBA(hex: 0xF6E7D8).linear
-    palette.bgBottom = RGBA(hex: 0xD99A76).linear
-    scene.palette = palette
-    guard let r = ClayRenderer(), let img = r.renderImage(scene, width: 824, height: 824),
-          let ctx = CGContext(data: nil, width: 1024, height: 1024, bitsPerComponent: 8, bytesPerRow: 0,
+    guard let ctx = CGContext(data: nil, width: 1024, height: 1024, bitsPerComponent: 8, bytesPerRow: 0,
                               space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
-    let rect = CGRect(x: 100, y: 100, width: 824, height: 824)
-    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 185, cornerHeight: 185, transform: nil))
-    ctx.clip()
-    ctx.draw(img, in: rect)
+    // The logo is drawn with y growing downward, so flip the bitmap context first.
+    ctx.translateBy(x: 0, y: 1024)
+    ctx.scaleBy(x: 1, y: -1)
+    // macOS icons leave a margin around the rounded square (824 of 1024 px).
+    ClayLogo.draw(in: CGRect(x: 100, y: 100, width: 824, height: 824), context: ctx)
     writePNG(ctx.makeImage()!, to: URL(fileURLWithPath: CommandLine.arguments[2]))
     exit(0)
 }
@@ -279,8 +265,35 @@ s.saveNow()
 let reloaded = WorkspaceState(document: store.load(s.document.id)!)
 check(reloaded.stats.triangles == s.stats.triangles && abs(reloaded.stats.volume - s.stats.volume) < 1, "reloaded project rebuilds the same body")
 
-// 9. Other themes
-print("9. Themes")
+// 9. Pen tool + clean vector export
+print("9. Pen tool")
+let pen = WorkspaceState(document: store.create(name: "Leaf"))
+pen.theme = themes.current
+pen.viewportSize = size
+pen.selectSketchTool(.pen)
+let pt = pen.sketchViewTransform(.front)
+@MainActor func penEvent(_ phase: PointerEvent.Phase, _ p: Vec2) {
+    pen.sketchPointerForTesting(PointerEvent(phase: phase, location: pt.toView(p, size: size)), plane: .front)
+}
+penEvent(.down, Vec2(0, 5)); penEvent(.up, Vec2(0, 5))
+penEvent(.down, Vec2(32, 55)); penEvent(.dragged, Vec2(32, 80)); penEvent(.up, Vec2(32, 80))
+penEvent(.down, Vec2(0, 115)); penEvent(.up, Vec2(0, 115))
+penEvent(.down, Vec2(-32, 55)); penEvent(.dragged, Vec2(-32, 30)); penEvent(.up, Vec2(-32, 30))
+penEvent(.moved, Vec2(-6, 12))
+screen(pen, "17-pen-tool-drawing.png")
+penEvent(.down, Vec2(0, 5)); penEvent(.up, Vec2(0, 5))
+check(pen.timeline.sketch(.front)?.paths.first?.closed == true, "pen tool closed the leaf on its first point")
+pen.selectSketchTool(.edit)
+pen.sketchSelection = pen.timeline.sketch(.front)?.paths.first.map { SketchSelection(plane: .front, pathID: $0.id) }
+screen(pen, "18-pen-tool-done.png")
+if let svg = MeshExporter.vectorSVG([(.front, pen.timeline.sketch(.front)!)], name: "Leaf") {
+    try svg.write(to: out.appendingPathComponent("leaf-vector.svg"))
+    let text = String(decoding: svg, as: UTF8.self)
+    check(text.contains(" C") && !text.contains("<text") && !text.contains("<rect"), "clean SVG is only Bézier curves")
+}
+
+// 10. Other themes
+print("10. Themes")
 for theme in [StudioTheme.darkSlate, .blueprint] {
     themes.current = theme
     s.theme = theme

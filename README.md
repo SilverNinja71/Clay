@@ -22,7 +22,7 @@ Or run straight from the package with `swift run Clay`. The first launch opens t
 
 | Area | What you get |
 |---|---|
-| **Sketch** (Parchment) | Grid / ruled / dotted / blank paper sheets for the front and side planes, split view, 90° page-turn between planes. Pencil strokes become clean Bézier curves (corners kept), auto-close, snap to the centre axis and join open ends. Line, circle, rectangle, point editing, eraser. Guides (base, top, widest, waist, feature marks) carried across from the other view. |
+| **Sketch** (Parchment) | Grid / ruled / dotted / blank paper sheets for the front and side planes, split view, 90° page-turn between planes. Pencil strokes become clean Bézier curves (corners kept), auto-close, snap to the centre axis and join open ends. Illustrator-style pen tool (click for corners, drag for curves, ⌥-drag to break a handle, click the first point to close). Line, circle, rectangle, point editing, eraser. Guides (base, top, widest, waist, feature marks) carried across from the other view. |
 | **Constraints** (Fusion) | Distance, horizontal/vertical distance, horizontal, vertical, parallel, perpendicular, angle, equal, coincident, fix, radius, concentric, tangent — solved with Levenberg–Marquardt. |
 | **Loft** | Dual-silhouette cross-loft into a watertight mesh (superellipse sections, adjustable squareness); open half-profiles revolve. Extrude for flat shapes. |
 | **Sculpt** (Blender) | Clay, Clay Strips, Draw, Grab, Smooth, Crease, Pinch, Flatten, Scrape, Inflate/Deflate; X symmetry, pressure, falloffs, hold Shift to smooth, Ctrl to invert, voxel remesh, subdivide. |
@@ -31,7 +31,7 @@ Or run straight from the package with `swift run Clay`. The first launch opens t
 | **Model ops** | Radial menu: Extrude, Fillet, Chamfer, Offset, Shell (open top), Split, Dimension. G/R/S modal transforms with axis locks and typed values, transform gizmo, duplicate. |
 | **Viewport** | Metal renderer with studio clay shading, cavity darkening, ground grid, contact shadow, wireframe, glowing loft reveal, orientation widget. |
 | **Personalise** | Notebook covers in Glazed Ceramic, Matte Terracotta, Industrial Aluminum, Blueprint Cardstock, Obsidian Leather; colours, emblems, hand-drawn doodles, 3D thumbnails. Themes: Ceramic, Dark Slate, Blueprint. |
-| **Export** | STL (Z up), OBJ, USDZ (real-world scale, AR Quick Look), STEP (faceted solid), SVG drawing sheet, `.clay` project. |
+| **Export** | STL (Z up), OBJ, USDZ (real-world scale, AR Quick Look), STEP (faceted solid), clean vector SVG (just your curves, 1:1 mm), SVG drawing sheet, `.clay` project. |
 
 ## Controls
 
@@ -50,7 +50,7 @@ The full list is under the keyboard button in the top bar.
 
 ```bash
 swift build
-swift test                          # 24 tests: geometry, sculpt, CAD, timeline, keymap
+swift test                          # 28 tests: geometry, sculpt, CAD, timeline, keymap, sketch tools
 swift run ClaySnapshots /tmp/clay   # drives the whole tutorial headlessly; writes screenshots + exports
 ```
 
@@ -72,6 +72,7 @@ iOS SDK. To build for iPad you need the full Xcode app:
 - Detail-adding uses voxel remesh + subdivide rather than dynamic topology (Dyntopo).
 - Extruded and duplicated bodies sit alongside each other; there are no boolean unions yet.
 - Parchment's own file format isn't public, so the "Parchment-style" export is an SVG drawing sheet.
+- Vector curves are outlines only (no fills or line styles yet).
 
 ## Layout
 
