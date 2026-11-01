@@ -19,7 +19,7 @@ describes features, controls and known limits.
 
 ```bash
 swift build
-swift test                                  # 28 Swift Testing tests
+swift test                                  # 36 Swift Testing tests
 swift build -c release --product ClaySnapshots && .build/release/ClaySnapshots <dir>
 Scripts/build-app.sh                        # Clay.app (do not `open` it while testing)
 ```
@@ -45,6 +45,15 @@ Extensions add viewport input (`Viewport/ClayViewportView.swift`), sketch tools
 Sculpting runs on `SculptEngine`; each finished stroke is stored as a `SculptLayer` (displacements in
 local frames) so upstream sketch/dimension edits rebuild the loft and re-apply the sculpt.
 `PointerCaptureView` (NSView / UIView) turns mouse, trackpad, Pencil and touch into `PointerEvent`s.
+
+Sketches live on `SketchPlane`s (origin / normal / up / size / sketch / lock / visibility), stored as
+`.sketch` timeline features; **a plane's id is its feature's id** (older files are migrated on load).
+`StandardPlane` (front / side / top) marks the built-in planes whose sketches drive the classic
+silhouette `LoftEngine`; positioned planes feed `SectionLoftEngine` ("Form Clay", `.sectionLoft`).
+Everything plane-related is keyed by plane id (`activePlaneID`, `SketchSelection.planeID`,
+`CalloutID.sketchConstraint`, `ModalTransform.Target.sketchPath/.plane`). The same 2D sketch tools run
+on the flat sheet (`OrthoSketchCanvas`) and in the 3D view (`sketch3DDown/Dragged/Up` project the
+pointer onto the active plane).
 `KeyboardShortcutManager` holds the pure `BlenderKeymap.resolve` and the `ModalTransform` state machine.
 
 ## Status
@@ -73,3 +82,5 @@ Everything in SPEC.md has a working implementation on macOS, checked headlessly.
 - Call `compacted()` after operations that drop triangles, or unused vertices skew bounds and exports.
 - `MTKView.delegate` is weak — keep the `ClayRenderer` alive in the representable's coordinator.
 - Tests import Foundation explicitly (UUID). Test-name filters use type/function names, not suite titles.
+- macOS `sed` has no `\b` word boundary: use `perl -pi -e 's/\bOld\b/New/g'` for renames.
+- Stage files by name when committing: the user sometimes has their own uncommitted work in the tree.

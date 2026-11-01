@@ -23,6 +23,7 @@ Or run straight from the package with `swift run Clay`. The first launch opens t
 | Area | What you get |
 |---|---|
 | **Sketch** (Parchment) | Grid / ruled / dotted / blank paper sheets for the front and side planes, split view, 90° page-turn between planes. Pencil strokes become clean Bézier curves (corners kept), auto-close, snap to the centre axis and join open ends. Illustrator-style pen tool (click for corners, drag for curves, ⌥-drag to break a handle, click the first point to close). Line, circle, rectangle, point editing, eraser. Guides (base, top, widest, waist, feature marks) carried across from the other view. |
+| **Sketch planes** (Feather 3D / Shapr3D) | Add planes anywhere (⇧A, or right-click the clay → Plane to sit one on its surface), place them with the gizmo or G/R/S, offset/flip/lock/hide them, “Look at” a plane, and draw on it in the 3D view or on its flat sheet. Other planes show where they cross the sheet. **Form Clay** lofts smoothly through the closed curve on every visible plane (one curve inflates into a pillow); Ctrl+Tab forms and starts sculpting. |
 | **Constraints** (Fusion) | Distance, horizontal/vertical distance, horizontal, vertical, parallel, perpendicular, angle, equal, coincident, fix, radius, concentric, tangent — solved with Levenberg–Marquardt. |
 | **Loft** | Dual-silhouette cross-loft into a watertight mesh (superellipse sections, adjustable squareness); open half-profiles revolve. Extrude for flat shapes. |
 | **Sculpt** (Blender) | Clay, Clay Strips, Draw, Grab, Smooth, Crease, Pinch, Flatten, Scrape, Inflate/Deflate; X symmetry, pressure, falloffs, hold Shift to smooth, Ctrl to invert, voxel remesh, subdivide. |
@@ -30,7 +31,7 @@ Or run straight from the package with `swift run Clay`. The first launch opens t
 | **Timeline** | Front Sketch → Side Sketch → Loft → Sculpt → Chamfer…: edit, suppress, roll back or delete any step; sculpting survives upstream edits. |
 | **Model ops** | Radial menu: Extrude, Fillet, Chamfer, Offset, Shell (open top), Split, Dimension. G/R/S modal transforms with axis locks and typed values, transform gizmo, duplicate. |
 | **Viewport** | Metal renderer with studio clay shading, cavity darkening, ground grid, contact shadow, wireframe, glowing loft reveal, orientation widget. |
-| **Personalise** | Notebook covers in Glazed Ceramic, Matte Terracotta, Industrial Aluminum, Blueprint Cardstock, Obsidian Leather; colours, emblems, hand-drawn doodles, 3D thumbnails. Themes: Ceramic, Dark Slate, Blueprint. |
+| **Library** | Project cards showing the model on its cover material with an overview (size, steps, print-ready), a “continue where you left off” panel, studio stats and a theme picker. Covers: Glazed Ceramic, Matte Terracotta, Industrial Aluminum, Blueprint Cardstock, Obsidian Leather, with colours, emblems and hand-drawn doodles. Themes: Ceramic, Dark Slate, Blueprint. |
 | **Export** | STL (Z up), OBJ, USDZ (real-world scale, AR Quick Look), STEP (faceted solid), clean vector SVG (just your curves, 1:1 mm), SVG drawing sheet, `.clay` project. |
 
 ## Controls
@@ -39,6 +40,7 @@ Or run straight from the package with `swift run Clay`. The first launch opens t
 |---|---|
 | Middle-drag orbit · ⇧ pan · Ctrl zoom (or ⌥ + drag); wheel zooms; trackpad swipe orbits | 1 finger orbits, 2 fingers pan, pinch zooms |
 | Tab cycles Sketch → Model → Sculpt → Dimension | Mode switcher at the top |
+| ⇧A adds a sketch plane; Ctrl+Tab forms clay and starts sculpting | + Plane in the Planes panel |
 | Numpad (or top-row) 1 / 3 / 7 views, 5 ortho, Home frame | Orientation widget |
 | G / R / S, then X/Y/Z and a number, Enter | Transform gizmo; radial menu on tap |
 | ⌘Z / ⇧⌘Z | Two-finger tap undo, three-finger tap redo |
@@ -50,7 +52,7 @@ The full list is under the keyboard button in the top bar.
 
 ```bash
 swift build
-swift test                          # 28 tests: geometry, sculpt, CAD, timeline, keymap, sketch tools
+swift test                          # 36 tests: geometry, sculpt, CAD, timeline, keymap, sketch tools, sketch planes
 swift run ClaySnapshots /tmp/clay   # drives the whole tutorial headlessly; writes screenshots + exports
 ```
 
