@@ -203,8 +203,8 @@ public enum ExtrudeEngine {
             let d1: Float = p.symmetric ? p.depth / 2 : p.depth
             let n = poly.count
             var pos: [Vec3] = []
-            for q in poly { pos.append(plane.worldPoint(q, offset: d1)) }
-            for q in poly { pos.append(plane.worldPoint(q, offset: d0)) }
+            for q in poly { pos.append(plane.world(q, offset: d1)) }
+            for q in poly { pos.append(plane.world(q, offset: d0)) }
             // Planes are right-handed with normal toward the viewer, so CCW loops face +normal.
             var idx: [UInt32] = []
             for t in tris { idx += [UInt32(t.0), UInt32(t.1), UInt32(t.2)] }                  // front cap

@@ -142,8 +142,9 @@ public enum MeshExporter {
     // MARK: Clean vector SVG
 
     /// Just the sketch curves as exact cubic Bézier paths, 1:1 in millimetres — no paper, labels
-    /// or dimensions. Each plane is its own group, laid out left to right on a shared baseline.
-    public static func vectorSVG(_ sketches: [(SketchPlane, Sketch)], name: String) -> Data? {
+    /// or dimensions. Each plane is its own group (named after it), laid out left to right on a
+    /// shared baseline, each seen straight on.
+    public static func vectorSVG(_ sketches: [(String, Sketch)], name: String) -> Data? {
         let used = sketches.filter { !$0.1.isEmpty && $0.1.bounds != nil }
         guard !used.isEmpty else { return nil }
         let margin: Float = 2, gap: Float = 20
@@ -163,7 +164,8 @@ public enum MeshExporter {
                 if path.closed { d += " Z" }
                 paths.append("    <path d=\"\(d)\"/>")
             }
-            groups.append("  <g id=\"\(plane.rawValue)\">\n\(paths.joined(separator: "\n"))\n  </g>")
+            let gid = plane.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }
+            groups.append("  <g id=\"\(String(gid))\">\n\(paths.joined(separator: "\n"))\n  </g>")
             x += (b.max.x - b.min.x) + gap
         }
         let w = x - gap + margin, h = top - bottom + margin * 2

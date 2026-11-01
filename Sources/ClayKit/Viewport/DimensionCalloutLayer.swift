@@ -7,7 +7,7 @@ public enum CalloutID: Hashable, Sendable {
     case profile(ProfileDimension)
     case feature(UUID)
     case measurement(UUID)
-    case sketchConstraint(SketchPlane, Int)
+    case sketchConstraint(UUID, Int)      // plane id, constraint index
 }
 
 /// One CAD dimension shown in the viewport: a measured value between two world points
@@ -76,8 +76,8 @@ extension WorkspaceState {
                   let sb = sf.sketch.bounds else { return nil }
             let mid = (sb.min + sb.max) / 2
             let d0: Float = p.symmetric ? -p.depth / 2 : 0
-            let a = sf.plane.worldPoint(Vec2(sb.max.x + 8, mid.y), offset: d0)
-            let e = sf.plane.worldPoint(Vec2(sb.max.x + 8, mid.y), offset: d0 + p.depth)
+            let a = sf.plane.world(Vec2(sb.max.x + 8, mid.y), offset: d0)
+            let e = sf.plane.world(Vec2(sb.max.x + 8, mid.y), offset: d0 + p.depth)
             return DimensionCallout(id: .feature(f.id), title: "\(f.name) depth", value: p.depth, a: a, b: e)
         case .remesh(let r):
             let p = Vec3(b.min.x, b.max.y, c.z)
@@ -106,7 +106,7 @@ extension WorkspaceState {
         case .measurement(let mid):
             return measurements.first { $0.id == mid }.map { simd_distance($0.a, $0.b) }
         case .sketchConstraint(let plane, let i):
-            guard let s = timeline.sketch(plane), i < s.constraints.count else { return nil }
+            guard let s = timeline.plane(plane)?.sketch, i < s.constraints.count else { return nil }
             return s.constraints[i].value
         }
     }
@@ -116,12 +116,12 @@ extension WorkspaceState {
         case .profile(let d): d.title
         case .feature(let fid): feature(fid)?.name ?? "Feature"
         case .measurement: "Measure"
-        case .sketchConstraint(let plane, let i): timeline.sketch(plane).flatMap { i < $0.constraints.count ? $0.constraints[i].title : nil } ?? "Dimension"
+        case .sketchConstraint(let plane, let i): timeline.plane(plane).flatMap { i < $0.sketch.constraints.count ? $0.sketch.constraints[i].title : nil } ?? "Dimension"
         }
     }
 
     public func calloutIsAngle(_ id: CalloutID) -> Bool {
-        if case .sketchConstraint(let plane, let i) = id, let s = timeline.sketch(plane), i < s.constraints.count,
+        if case .sketchConstraint(let plane, let i) = id, let s = timeline.plane(plane)?.sketch, i < s.constraints.count,
            case .angle = s.constraints[i] { return true }
         return false
     }
@@ -157,7 +157,7 @@ extension WorkspaceState {
         case .measurement:
             break
         case .sketchConstraint(let plane, let i):
-            let change: (inout Timeline) -> Void = { tl in tl.editSketch(plane) { s in
+            let change: (inout Timeline) -> Void = { tl in tl.editSketch(id: plane) { s in
                 guard i < s.constraints.count else { return }
                 s.constraints[i] = s.constraints[i].withValue(v)
                 ConstraintSolver.solve(&s)

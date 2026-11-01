@@ -84,6 +84,7 @@ enum ViewportDrag {
     case pan(last: CGPoint)
     case zoom(last: CGPoint)
     case sculpt
+    case sketch
 }
 
 extension WorkspaceState {
@@ -115,6 +116,7 @@ extension WorkspaceState {
         switch e.phase {
         case .moved:
             if modal != nil { updateModal(pointer: e.location) }
+            if mode == .sketch { sketch3DHover(e) }
             if mode == .sculpt, let m = mesh {
                 brushCursor = m.raycast(ray(at: e.location)).map { ($0.position, brush.radius) }
             }
@@ -148,7 +150,7 @@ extension WorkspaceState {
         if secondary {
             if mode == .model || mode == .sculpt, let hit = mesh?.raycast(ray(at: p)) {
                 bodySelected = true
-                radialMenu = RadialMenuState(location: p, hit: hit.position)
+                radialMenu = RadialMenuState(location: p, hit: hit.position, normal: hit.normal)
             }
             return
         }
@@ -158,6 +160,8 @@ extension WorkspaceState {
             return
         }
         switch mode {
+        case .sketch:
+            viewportDrag = sketch3DDown(e) ? .sketch : .pending(start: p, hit: nil)
         case .sculpt:
             if sculptBegin(ray: ray(at: p), pressure: e.pressure, invert: e.modifiers.contains(.control), smooth: e.modifiers.contains(.shift)) {
                 viewportDrag = .sculpt
@@ -183,6 +187,8 @@ extension WorkspaceState {
             viewportDrag = .zoom(last: p)
         case .sculpt?:
             sculptDrag(ray: ray(at: p), pressure: e.pressure)
+        case .sketch?:
+            sketch3DDragged(e)
         case .pending(let start, _)?:
             if hypot(p.x - start.x, p.y - start.y) > 4 {
                 camera.orbit(dx: Float(p.x - start.x), dy: Float(p.y - start.y))
@@ -198,6 +204,8 @@ extension WorkspaceState {
         switch viewportDrag {
         case .sculpt?:
             sculptEnd()
+        case .sketch?:
+            sketch3DUp(e, cancelled: cancelled)
         case .pending(let start, let hit)?:
             guard !cancelled else { return }
             tap(at: start, hit: hit, device: e.device)

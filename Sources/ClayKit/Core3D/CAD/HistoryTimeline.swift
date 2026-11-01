@@ -3,15 +3,40 @@ import simd
 
 // MARK: - Features
 
+/// A sketch step: a positioned plane and the curves drawn on it.
 public struct SketchFeature: Codable, Sendable {
     public var plane: SketchPlane
-    public var sketch: Sketch
-    public init(plane: SketchPlane, sketch: Sketch = Sketch()) { self.plane = plane; self.sketch = sketch }
+    public var sketch: Sketch {
+        get { plane.sketch }
+        set { plane.sketch = newValue }
+    }
+
+    public init(plane: SketchPlane) { self.plane = plane }
+    public init(standard: StandardPlane, sketch: Sketch = Sketch()) { plane = .standard(standard, sketch: sketch) }
+
+    enum CodingKeys: String, CodingKey { case plane, sketch }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let p = try? c.decode(SketchPlane.self, forKey: .plane) {
+            plane = p
+        } else {
+            // Projects saved before positioned planes: {"plane": "front", "sketch": {…}}.
+            let s = try c.decode(StandardPlane.self, forKey: .plane)
+            plane = .standard(s, sketch: try c.decodeIfPresent(Sketch.self, forKey: .sketch) ?? Sketch())
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(plane, forKey: .plane)
+    }
 }
 
 public enum FeatureKind: Codable, Sendable {
     case sketch(SketchFeature)
     case loft(LoftParameters)
+    case sectionLoft(SectionLoftParameters)
     case extrude(ExtrudeParameters)
     case sculpt(SculptLayer)
     case edgeTreatment(EdgeTreatment)
@@ -23,12 +48,15 @@ public enum FeatureKind: Codable, Sendable {
     case remesh(RemeshParameters)
     case subdivide
 
+    public static let sculptSymbol = "hand.draw"
+
     public var symbol: String {
         switch self {
         case .sketch: "pencil.and.outline"
         case .loft: "cylinder"
+        case .sectionLoft: "square.3.layers.3d"
         case .extrude: "square.stack.3d.up"
-        case .sculpt: "hand.draw"
+        case .sculpt: Self.sculptSymbol
         case .edgeTreatment(let e): e.style == .chamfer ? "square.on.square.dashed" : "circle.bottomhalf.filled"
         case .shell: "cube.transparent"
         case .offset: "arrow.up.left.and.arrow.down.right"
@@ -42,7 +70,7 @@ public enum FeatureKind: Codable, Sendable {
 
     /// Body-creating features start or add to the mesh; modifiers need an existing mesh.
     var createsBody: Bool {
-        switch self { case .loft, .extrude: true; default: false }
+        switch self { case .loft, .sectionLoft, .extrude: true; default: false }
     }
 }
 
@@ -67,6 +95,16 @@ public struct Feature: Identifiable, Codable, Sendable {
         kind = try c.decode(FeatureKind.self, forKey: .kind)
         suppressed = try c.decodeIfPresent(Bool.self, forKey: .suppressed) ?? false
         revision = Revision.next()
+        // A sketch's plane shares its feature's id (older files gave planes fresh ids on load).
+        if case .sketch(var s) = kind, s.plane.id != id {
+            s.plane = s.plane.withID(id)
+            kind = .sketch(s)
+        }
+    }
+
+    /// A timeline step for a sketch plane (its id is the plane's id).
+    public init(plane: SketchPlane) {
+        self.init(id: plane.id, name: plane.name, kind: .sketch(SketchFeature(plane: plane)))
     }
 
     public mutating func edit(_ body: (inout FeatureKind) -> Void) {
@@ -108,21 +146,50 @@ public struct Timeline: Codable, Sendable {
 
     /// A new document: empty front and side sketches.
     public static func starter() -> Timeline {
-        Timeline(features: [
-            Feature(name: "Front Sketch", kind: .sketch(SketchFeature(plane: .front))),
-            Feature(name: "Side Sketch", kind: .sketch(SketchFeature(plane: .side))),
-        ])
+        Timeline(features: [Feature(plane: .standard(.front)), Feature(plane: .standard(.side))])
     }
 
     public var activeCount: Int { min(marker ?? features.count, features.count) }
 
     public func index(of id: UUID) -> Int? { features.firstIndex { $0.id == id } }
 
-    public func sketchFeatureIndex(_ plane: SketchPlane) -> Int? {
-        features.firstIndex { $0.sketch?.plane == plane }
+    public func sketchFeatureIndex(_ plane: StandardPlane) -> Int? {
+        features.firstIndex { $0.sketch?.plane.standard == plane }
     }
 
-    public func sketch(_ plane: SketchPlane) -> Sketch? {
+    // MARK: Planes (a plane's id is its sketch feature's id)
+
+    public func planeIndex(_ id: UUID?) -> Int? {
+        guard let id else { return nil }
+        return features.firstIndex { $0.id == id && $0.sketch != nil }
+    }
+
+    public func plane(_ id: UUID?) -> SketchPlane? { planeIndex(id).flatMap { features[$0].sketch?.plane } }
+
+    public func planeID(_ s: StandardPlane) -> UUID? { sketchFeatureIndex(s).map { features[$0].id } }
+
+    /// Every sketch plane in timeline order (only those before the rollback marker).
+    public var planes: [SketchPlane] { features.prefix(activeCount).compactMap { $0.sketch?.plane } }
+
+    public mutating func editPlane(_ id: UUID, _ body: (inout SketchPlane) -> Void) {
+        guard let i = planeIndex(id) else { return }
+        features[i].edit { kind in
+            if case .sketch(var s) = kind { body(&s.plane); kind = .sketch(s) }
+        }
+    }
+
+    public mutating func editSketch(id: UUID, _ body: (inout Sketch) -> Void) {
+        editPlane(id) { body(&$0.sketch) }
+    }
+
+    /// Index of the body-making loft step (classic or multi-plane), if any.
+    public var formIndex: Int? {
+        features.firstIndex {
+            switch $0.kind { case .loft, .sectionLoft: return true; default: return false }
+        }
+    }
+
+    public func sketch(_ plane: StandardPlane) -> Sketch? {
         sketchFeatureIndex(plane).flatMap { features[$0].sketch?.sketch }
     }
 
@@ -130,7 +197,7 @@ public struct Timeline: Codable, Sendable {
         features.firstIndex { if case .loft = $0.kind { return true }; return false }
     }
 
-    public mutating func editSketch(_ plane: SketchPlane, _ body: (inout Sketch) -> Void) {
+    public mutating func editSketch(_ plane: StandardPlane, _ body: (inout Sketch) -> Void) {
         guard let i = sketchFeatureIndex(plane) else { return }
         features[i].edit { kind in
             if case .sketch(var s) = kind { body(&s.sketch); kind = .sketch(s) }
@@ -234,6 +301,18 @@ public final class TimelineEvaluator {
                 var m = input ?? .empty
                 if m.isEmpty { m = body } else { m.append(body) }
                 return (m, (side?.isEmpty ?? true) ? .warning("No side sketch — using round sections.") : .ok)
+            } catch {
+                return (input, .error(error.localizedDescription))
+            }
+
+        case .sectionLoft(let p):
+            let planes = p.planes.compactMap { tl.plane($0) }.filter(\.isVisible)
+            do {
+                let body = try SectionLoftEngine.loft(planes: planes, parameters: p)
+                var m = input ?? .empty
+                if m.isEmpty { m = body } else { m.append(body) }
+                let used = planes.filter { $0.curves.contains(where: \.closed) }.count
+                return (m, used < planes.count ? .warning("\(planes.count - used) plane(s) had no closed curve and were skipped.") : .ok)
             } catch {
                 return (input, .error(error.localizedDescription))
             }

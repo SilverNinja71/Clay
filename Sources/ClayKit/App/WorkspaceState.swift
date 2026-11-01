@@ -78,7 +78,7 @@ public enum ModelTool: String, CaseIterable, Identifiable, Sendable {
 public enum DimensionTool: String, Sendable { case inspect, measure }
 
 public enum RadialAction: String, CaseIterable, Identifiable, Sendable {
-    case extrude, fillet, chamfer, offset, shell, split, dimension
+    case extrude, fillet, chamfer, offset, shell, split, plane, dimension
     public var id: String { rawValue }
     public var title: String { rawValue.capitalized }
     public var symbol: String {
@@ -89,6 +89,7 @@ public enum RadialAction: String, CaseIterable, Identifiable, Sendable {
         case .offset: "arrow.up.left.and.arrow.down.right"
         case .shell: "cube.transparent"
         case .split: "scissors"
+        case .plane: "square.on.square"
         case .dimension: "ruler"
         }
     }
@@ -109,14 +110,15 @@ public struct Measurement: Identifiable, Equatable, Sendable {
 public struct RadialMenuState: Equatable, Sendable {
     public var location: CGPoint
     public var hit: Vec3
-    public init(location: CGPoint, hit: Vec3) { self.location = location; self.hit = hit }
+    public var normal: Vec3
+    public init(location: CGPoint, hit: Vec3, normal: Vec3 = .zero) { self.location = location; self.hit = hit; self.normal = normal }
 }
 
 public struct SketchSelection: Equatable, Sendable {
-    public var plane: SketchPlane
+    public var planeID: UUID
     public var pathID: UUID
     public var anchors: [Int] = []
-    public init(plane: SketchPlane, pathID: UUID, anchors: [Int] = []) { self.plane = plane; self.pathID = pathID; self.anchors = anchors }
+    public init(planeID: UUID, pathID: UUID, anchors: [Int] = []) { self.planeID = planeID; self.pathID = pathID; self.anchors = anchors }
 }
 
 public struct ShapeDrag: Equatable, Sendable {
@@ -163,7 +165,13 @@ public final class WorkspaceState {
     // MARK: Modes & tools
 
     public internal(set) var mode: WorkspaceMode = .sketch
-    public var activePlane: SketchPlane = .front
+    /// The sketch plane being drawn on (a plane's id is its timeline feature's id).
+    public var activePlaneID: UUID?
+    public var activePlane: SketchPlane? { timeline.plane(activePlaneID) }
+    /// Sketch mode: show every plane in 3D instead of the flat paper sheet.
+    public var sketchIn3D = false
+    /// What dragging the plane gizmo does.
+    public var planeGizmo: ModelTool = .move
     public var splitSketch = false
     public var sketchTool: SketchTool = .pencil
     public var modelTool: ModelTool = .select
@@ -181,8 +189,8 @@ public final class WorkspaceState {
     public var camera = OrbitCamera()
     @ObservationIgnored var cameraAnimator = CameraAnimator()
     public var viewportSize = CGSize(width: 900, height: 640)
-    public var sketchViews: [SketchPlane: SketchViewTransform] = [:]
-    @ObservationIgnored var sketchCanvasSizes: [SketchPlane: CGSize] = [:]
+    public var sketchViews: [UUID: SketchViewTransform] = [:]
+    @ObservationIgnored var sketchCanvasSizes: [UUID: CGSize] = [:]
 
     // MARK: Selection & live interaction
 
@@ -196,7 +204,7 @@ public final class WorkspaceState {
     public var pendingMeasure: Vec3?
     public var pendingDimensionAnchors: [AnchorRef] = []
     public var liveStroke: [Vec2] = []
-    public var livePlane: SketchPlane = .front
+    public var livePlane: UUID?
     public var livePolyline: [Vec2] = []
     /// Anchors of the curve being placed with the pen tool.
     public var livePen: [BezierAnchor] = []
@@ -243,6 +251,7 @@ public final class WorkspaceState {
 
     public init(document: ClayDocument) {
         self.document = document
+        activePlaneID = document.timeline.planeID(.front) ?? document.timeline.planes.first?.id
         reevaluate()
         if let c = document.camera { camera = c } else if let m = mesh { camera = OrbitCamera().framing(m.bounds) }
         if mesh != nil { mode = .model }
@@ -347,7 +356,7 @@ public final class WorkspaceState {
 
     public func deleteFeature(_ id: UUID) {
         guard let i = timeline.index(of: id) else { return }
-        if timeline.features[i].sketch != nil {
+        if let sf = timeline.features[i].sketch, sf.plane.standard != nil {
             commit { $0.features[i].edit { if case .sketch(var s) = $0 { s.sketch = Sketch(); $0 = .sketch(s) } } }
             showToast("Sketch cleared", symbol: "eraser")
             return
@@ -358,6 +367,7 @@ public final class WorkspaceState {
             if let m = tl.marker, m > i { tl.marker = m - 1 }
         }
         if selectedFeatureID == id { selectedFeatureID = nil }
+        if activePlaneID == id { activePlaneID = timeline.planeID(.front) ?? timeline.planes.first?.id }
         if mode == .sculpt && sculptFeatureID == nil { _ = enterSculpt() }
     }
 
@@ -379,7 +389,8 @@ public final class WorkspaceState {
         selectedFeatureID = id
         switch f.kind {
         case .sketch(let s):
-            activePlane = s.plane
+            setPlane(id: s.plane.id)
+            if s.plane.standard == nil { sketchIn3D = true }
             setMode(.sketch)
         case .sculpt:
             if timeline.index(of: id) == timeline.activeCount - 1 { setMode(.sculpt) } else { setMode(.model) }
@@ -413,7 +424,7 @@ public final class WorkspaceState {
         if old == .sketch && m != .sketch {
             // Start from the orthographic view the user was drawing in, then glide to 3/4.
             let b = sceneBounds
-            camera = OrbitCamera.preset(activePlane == .side ? .right : .front, framing: b)
+            if !sketchIn3D { camera = OrbitCamera.preset(activePlane?.standard == .side ? .right : .front, framing: b) }
             cameraAnimator.goal = OrbitCamera.preset(.threeQuarter, framing: b)
         }
         tutorial?.handle(.modeChanged(m), in: self)
@@ -425,12 +436,17 @@ public final class WorkspaceState {
         setMode(m)
     }
 
-    public func setPlane(_ p: SketchPlane) {
+    public func setPlane(_ p: StandardPlane) {
         guard p != .top else { return }
+        setPlane(id: timeline.planeID(p))
+    }
+
+    public func setPlane(id: UUID?) {
+        guard let id, timeline.plane(id) != nil, id != activePlaneID else { return }
         finishPen(closed: false)
         sketchSelection = nil
         livePolyline = []
-        activePlane = p
+        activePlaneID = id
     }
 
     // MARK: - Camera
@@ -438,15 +454,18 @@ public final class WorkspaceState {
     public var sceneBounds: AABB {
         if let m = mesh, !m.isEmpty { return m.bounds }
         var b = AABB.empty
-        for plane in [SketchPlane.front, .side] {
-            guard let s = timeline.sketch(plane), let sb = s.bounds else { continue }
-            b.include(plane.worldPoint(sb.min)); b.include(plane.worldPoint(sb.max))
+        for plane in timeline.planes where plane.isVisible {
+            if let sb = plane.sketch.bounds {
+                for c in [sb.min, sb.max, Vec2(sb.min.x, sb.max.y), Vec2(sb.max.x, sb.min.y)] { b.include(plane.world(c)) }
+            } else if plane.standard == nil {
+                b.include(plane.world(plane.sheet.min)); b.include(plane.world(plane.sheet.max))
+            }
         }
         return b.isEmpty ? AABB(min: Vec3(-40, 0, -40), max: Vec3(40, 120, 40)) : b
     }
 
     public func setView(_ v: ViewPreset) {
-        if mode == .sketch {
+        if mode == .sketch && !sketchIn3D {
             switch v {
             case .front, .back: setPlane(.front)
             case .right, .left: setPlane(.side)
@@ -467,7 +486,7 @@ public final class WorkspaceState {
     }
 
     public func frameAll() {
-        if mode == .sketch { fitSketchView(activePlane); return }
+        if mode == .sketch && !sketchIn3D { fitSketchView(activePlaneID); return }
         cameraAnimator.goal = camera.framing(sceneBounds)
     }
 
@@ -488,8 +507,15 @@ public final class WorkspaceState {
     // MARK: - Loft ("Generate 3D Clay")
 
     public var canGenerate: Bool {
-        guard let front = timeline.sketch(.front) else { return false }
-        return !front.isEmpty && timeline.loftIndex == nil
+        guard timeline.formIndex == nil else { return false }
+        if formsFromPlanes { return true }
+        return !(timeline.sketch(.front)?.isEmpty ?? true)
+    }
+
+    /// True when a positioned (non-standard) plane has a closed curve: "Form Clay" lofts
+    /// through the planes instead of the classic front/side silhouettes.
+    public var formsFromPlanes: Bool {
+        timeline.planes.contains { $0.standard == nil && $0.isVisible && $0.curves.contains(where: \.closed) }
     }
 
     public func generateClay() {
@@ -509,7 +535,7 @@ public final class WorkspaceState {
         mode = .model
         bodySelected = true
         let b = m.bounds
-        camera = OrbitCamera.preset(activePlane == .side ? .right : .front, framing: b)
+        if !sketchIn3D { camera = OrbitCamera.preset(activePlane?.standard == .side ? .right : .front, framing: b) }
         cameraAnimator.goal = OrbitCamera.preset(.threeQuarter, framing: b)
         loftReveal = 0
         successTick += 1
@@ -625,7 +651,12 @@ public final class WorkspaceState {
     // MARK: - Model operations
 
     public func perform(_ action: RadialAction) {
+        let tapped = radialMenu
         radialMenu = nil
+        if action == .plane {
+            if let t = tapped { addPlaneOnSurface(at: t.hit, normal: t.normal) } else { addPlane() }
+            return
+        }
         guard action == .extrude || action == .dimension || !(mesh?.isEmpty ?? true) else {
             showToast("Generate 3D Clay first", symbol: "cube"); return
         }
@@ -644,6 +675,8 @@ public final class WorkspaceState {
             appendFeature(Feature(name: timeline.nextName("Split"), kind: .split(SplitParameters(height: b.min.y + b.size.y * 0.6))))
         case .dimension:
             setMode(.dimension)
+            return
+        case .plane:
             return
         }
         if action != .extrude, let id = selectedFeatureID { editingCallout = .feature(id) }
@@ -666,8 +699,8 @@ public final class WorkspaceState {
 
     /// E: extrudes the selected closed sketch path (or every closed path of the active plane).
     public func extrude() {
-        let plane = sketchSelection?.plane ?? activePlane
-        guard let si = timeline.sketchFeatureIndex(plane), let sketch = timeline.features[si].sketch?.sketch else { return }
+        let planeID = sketchSelection?.planeID ?? activePlaneID
+        guard let si = timeline.planeIndex(planeID), let sketch = timeline.features[si].sketch?.sketch else { return }
         var ids: [UUID]? = nil
         if let sel = sketchSelection, let p = sketch.paths.first(where: { $0.id == sel.pathID }) {
             guard p.closed else { showToast("Extrude needs a closed shape", symbol: "exclamationmark.triangle"); return }
@@ -691,12 +724,21 @@ public final class WorkspaceState {
             guard let m = mesh, !m.isEmpty else { return }
             modal = ModalTransform(kind: kind, target: .body, pivot: m.bounds.center, pointer: pointer ?? lastViewportPointer)
         case .sketch:
-            guard let sel = sketchSelection, let path = sketchPath(sel) else {
+            if let sel = sketchSelection, let path = sketchPath(sel) {
+                let start: CGPoint
+                if sketchIn3D {
+                    start = pointer ?? lastViewportPointer
+                } else {
+                    let size = sketchCanvasSizes[sel.planeID] ?? viewportSize
+                    start = pointer ?? sketchViewTransform(sel.planeID).toView(sketchHover ?? path.centroid, size: size)
+                }
+                modal = ModalTransform(kind: kind, target: .sketchPath(sel.planeID, sel.pathID), pivot: Vec3(path.centroid, z: 0), pointer: start)
+            } else if sketchIn3D, let plane = activePlane {
+                guard !plane.isLocked else { showToast("\(plane.name) is locked", symbol: "lock.fill"); return }
+                modal = ModalTransform(kind: kind, target: .plane(plane.id), pivot: plane.origin, pointer: pointer ?? lastViewportPointer)
+            } else {
                 showToast("Select a sketch curve first (V)", symbol: "cursorarrow"); return
             }
-            let size = sketchCanvasSizes[sel.plane] ?? viewportSize
-            let start = pointer ?? sketchViewTransform(sel.plane).toView(sketchHover ?? path.centroid, size: size)
-            modal = ModalTransform(kind: kind, target: .sketchPath(sel.plane, sel.pathID), pivot: Vec3(path.centroid, z: 0), pointer: start)
         default:
             return
         }
@@ -715,7 +757,7 @@ public final class WorkspaceState {
     func refreshModalStatus() {
         guard let m = modal else { statusText = ""; return }
         switch m.target {
-        case .body, .duplicate:
+        case .body, .duplicate, .plane:
             statusText = m.describe(modalTransform3D() ?? TransformParameters(), units: units)
         case .sketchPath:
             statusText = m.describe(TransformParameters(), units: units).components(separatedBy: "  ").first.map { "\($0) · sketch" } ?? ""
@@ -733,9 +775,15 @@ public final class WorkspaceState {
     }
 
     func modalMap2D() -> ((Vec2) -> Vec2)? {
-        guard let m = modal, case .sketchPath(let plane, _) = m.target else { return nil }
-        let size = sketchCanvasSizes[plane] ?? viewportSize
-        return m.transform2D(pivot2D: Vec2(m.pivot.x, m.pivot.y), view: sketchViewTransform(plane), size: size)
+        guard let m = modal, case .sketchPath(let planeID, _) = m.target else { return nil }
+        let pivot = Vec2(m.pivot.x, m.pivot.y)
+        if sketchIn3D, let plane = timeline.plane(planeID) {
+            // Pointer positions projected onto the plane through the 3D view.
+            guard let a = plane.intersect(ray(at: m.startPointer))?.local, let b = plane.intersect(ray(at: m.pointer))?.local else { return nil }
+            return m.transform2D(pivot2D: pivot, start: a, current: b)
+        }
+        let size = sketchCanvasSizes[planeID] ?? viewportSize
+        return m.transform2D(pivot2D: pivot, view: sketchViewTransform(planeID), size: size)
     }
 
     public func confirmModal() {
@@ -747,11 +795,15 @@ public final class WorkspaceState {
             }
         case .duplicate(let id):
             if let t = modalTransform3D() { editFeature(id) { $0 = .duplicate(t) } }
-        case .sketchPath(let plane, let pid):
+        case .sketchPath(let planeID, let pid):
             if let f = modalMap2D() {
-                commit { tl in tl.editSketch(plane) { s in
+                commit { tl in tl.editSketch(id: planeID) { s in
                     if let i = s.pathIndex(pid) { s.paths[i].transform(f) }
                 } }
+            }
+        case .plane(let id):
+            if let t = modalTransform3D(), !t.isIdentity {
+                commit { $0.editPlane(id) { $0.apply(t) } }
             }
         }
         modal = nil
@@ -781,12 +833,15 @@ public final class WorkspaceState {
             modal = ModalTransform(kind: .grab, target: .duplicate(id), pivot: t.pivot, pointer: lastViewportPointer)
             refreshModalStatus()
         case .sketch:
-            guard let sel = sketchSelection, var p = sketchPath(sel) else { return }
+            guard let sel = sketchSelection, var p = sketchPath(sel) else {
+                if sketchIn3D, let id = activePlaneID { duplicatePlane(id) }
+                return
+            }
             p.id = UUID()
             p.transform { $0 + Vec2(8, -8) }
             let copy = p
-            commit { $0.editSketch(sel.plane) { $0.paths.append(copy) } }
-            sketchSelection = SketchSelection(plane: sel.plane, pathID: copy.id)
+            commit { $0.editSketch(id: sel.planeID) { $0.paths.append(copy) } }
+            sketchSelection = SketchSelection(planeID: sel.planeID, pathID: copy.id)
             beginModal(.grab)
         default: break
         }
@@ -795,8 +850,11 @@ public final class WorkspaceState {
     public func deleteSelection() {
         switch mode {
         case .sketch:
-            guard let sel = sketchSelection else { return }
-            commit { tl in tl.editSketch(sel.plane) { s in
+            guard let sel = sketchSelection else {
+                if sketchIn3D, let p = activePlane, p.standard == nil { deleteFeature(p.id) }
+                return
+            }
+            commit { tl in tl.editSketch(id: sel.planeID) { s in
                 guard let i = s.pathIndex(sel.pathID) else { return }
                 if sel.anchors.isEmpty || s.paths[i].anchors.count - sel.anchors.count < 2 {
                     s.paths.remove(at: i)
@@ -863,6 +921,10 @@ public final class WorkspaceState {
         case .sketchTool(let t): selectSketchTool(t)
         case .finishShape: finishPolyline(closed: false); finishPen(closed: false)
         case .measureTool: dimensionTool = dimensionTool == .measure ? .inspect : .measure
+        case .addPlane: addPlane()
+        case .formAndSculpt:
+            if canGenerate { formClay() }
+            setMode(.sculpt)
         case .cancel:
             if !livePolyline.isEmpty || !livePen.isEmpty { livePolyline = []; livePen = [] }
             else if radialMenu != nil { radialMenu = nil }
@@ -897,7 +959,14 @@ public final class WorkspaceState {
     public func saveNow() {
         saveTask?.cancel()
         document.camera = camera
+        document.stats = projectStats
         onSave?(document, thumbnail())
+    }
+
+    /// Measurements of the current body for the library overview.
+    public var projectStats: ProjectStats? {
+        guard let m = mesh, !m.isEmpty else { return nil }
+        return ProjectStats(size: stats.size, triangles: stats.triangles, volume: stats.volume, watertight: stats.watertight)
     }
 
     /// Off-screen 3/4 render of the model for the library card.
@@ -909,6 +978,7 @@ public final class WorkspaceState {
         s.camera.distance *= 0.95
         s.palette = theme.palette
         s.showGrid = false
+        s.transparentBackground = true
         return r.renderImage(s, width: size, height: size)
     }
 
@@ -919,7 +989,10 @@ public final class WorkspaceState {
 
     // MARK: - Automation hooks (headless checks)
 
-    public func sketchPointerForTesting(_ e: PointerEvent, plane: SketchPlane) { sketchPointer(e, plane: plane) }
+    public func sketchPointerForTesting(_ e: PointerEvent, plane: StandardPlane) {
+        if let id = timeline.planeID(plane) { sketchPointer(e, plane: id) }
+    }
+    public func sketchPointerForTesting(_ e: PointerEvent, planeID: UUID) { sketchPointer(e, plane: planeID) }
     public var lastPointerForTesting: CGPoint {
         get { lastViewportPointer }
         set { lastViewportPointer = newValue }
@@ -939,23 +1012,84 @@ public final class WorkspaceState {
         if let m = modal, m.target == .body, let t = modalTransform3D() { s.modelMatrix = t.matrix }
 
         let accent = theme.accent.linear
-        let blue = theme.guideInk.linear
+        let ink = theme.sketchInk.linear
         let showCurves = showSketches && mode != .sculpt
-        for plane in [SketchPlane.front, .side] {
-            guard let sk = timeline.sketch(plane) else { continue }
-            let color = plane == .front ? accent : Vec4(blue.x, blue.y, blue.z, 1)
-            for path in sk.paths {
-                let pts = path.polyline(samplesPerSegment: 20).map { plane.worldPoint($0) }
+        let in3DSketch = mode == .sketch && sketchIn3D
+        var planeModal: (UUID, TransformParameters)?
+        if let m = modal, case .plane(let id) = m.target, let t = modalTransform3D() { planeModal = (id, t) }
+        for (index, original) in timeline.planes.enumerated() where original.isVisible && showsIn3D(original) {
+            var plane = original
+            if let (id, t) = planeModal, id == plane.id { plane.apply(t) }
+            let active = plane.id == activePlaneID
+            let color = planeColor(plane, index: index)
+            // Paper sheets: all planes while sketching in 3D, positioned planes while modelling.
+            if in3DSketch || (mode == .model && showSketches && plane.standard == nil) {
+                let sh = plane.sheet
+                let mid = (sh.min + sh.max) / 2
+                s.planes.append(PlaneVisual(center: plane.world(mid), right: plane.right, up: plane.up, halfSize: (sh.max - sh.min) / 2,
+                                            localCenter: mid, color: color, active: in3DSketch && active))
+            }
+            for path in plane.curves {
+                let pts = path.polyline(samplesPerSegment: 20).map { plane.world($0) }
                 if s.reveal != nil {
                     s.overlayCurves.append(CurveStroke(points: pts, color: color, width: 3.5, closed: path.closed))
+                } else if in3DSketch {
+                    let selected = sketchSelection?.pathID == path.id
+                    let c = selected ? accent : (active ? Vec4(ink.x, ink.y, ink.z, 1) : Vec4(color.x, color.y, color.z, 0.75))
+                    s.overlayCurves.append(CurveStroke(points: pts, color: c, width: selected ? 3.2 : (active ? 2.6 : 1.8), closed: path.closed))
                 } else if showCurves {
                     s.curves.append(CurveStroke(points: pts, color: Vec4(color.x, color.y, color.z, 0.9), width: 2, closed: path.closed))
                 }
             }
         }
+        if in3DSketch, let plane = timeline.plane(livePlane ?? activePlaneID) { appendLivePreview(&s, plane: plane) }
         for m in measurements {
             s.overlayCurves.append(CurveStroke(points: [m.a, m.b], color: Vec4(accent.x, accent.y, accent.z, 0.9), width: 2))
         }
         return s
+    }
+
+    /// Empty built-in front / side sheets stay out of the 3D view unless they're being drawn on.
+    func showsIn3D(_ p: SketchPlane) -> Bool {
+        p.standard == nil || !p.curves.isEmpty || p.id == activePlaneID
+    }
+
+    /// Front sketches use the accent, side sketches the guide blue, other planes cycle colours.
+    func planeColor(_ p: SketchPlane, index: Int) -> Vec4 {
+        switch p.standard {
+        case .front?: return theme.accent.linear
+        case .side?, .top?: return Vec4(theme.guideInk.linear.x, theme.guideInk.linear.y, theme.guideInk.linear.z, 1)
+        case nil:
+            let colors = [RGBA(hex: 0x4FA36B), RGBA(hex: 0x8A63D2), RGBA(hex: 0x2E9CB8), RGBA(hex: 0xD98E2B)]
+            return colors[index % colors.count].linear
+        }
+    }
+
+    /// The curve being drawn in the 3D sketch view (stroke, polyline, pen, shape) plus a cursor mark.
+    private func appendLivePreview(_ s: inout RenderScene, plane: SketchPlane) {
+        let c = theme.accent.linear
+        func add(_ pts: [Vec2], closed: Bool = false, alpha: Float = 1, width: Float = 2.6) {
+            guard pts.count > 1 else { return }
+            s.overlayCurves.append(CurveStroke(points: pts.map { plane.world($0) }, color: Vec4(c.x, c.y, c.z, alpha), width: width, closed: closed))
+        }
+        add(liveStroke)
+        if !livePolyline.isEmpty { add(livePolyline + (sketchHover.map { [$0] } ?? [])) }
+        if !livePen.isEmpty {
+            add(SketchPath(anchors: livePen, closed: false).polyline(samplesPerSegment: 16))
+            if let h = sketchHover, let last = livePen.last {
+                var seg: [Vec2] = []
+                CubicBezier(last.position, last.position + last.outHandle, h, h).flatten(into: &seg, samples: 16, dropLast: false)
+                add(seg, alpha: 0.5, width: 1.6)
+            }
+        }
+        if let sh = liveShape {
+            let path: SketchPath = sketchTool == .circle ? .circle(center: sh.start, radius: max(simd_distance(sh.start, sh.end), 0.01)) : .rectangle(sh.start, sh.end)
+            add(path.polyline(samplesPerSegment: 16), closed: true)
+        }
+        if let h = sketchHover {
+            let r = camera.worldPerPoint(viewHeight: viewportSize.height) * 6
+            add([h - Vec2(r, 0), h + Vec2(r, 0)], alpha: 0.8, width: 1.5)
+            add([h - Vec2(0, r), h + Vec2(0, r)], alpha: 0.8, width: 1.5)
+        }
     }
 }

@@ -450,7 +450,7 @@ public enum ProfileDimensionSolver {
             return (Vec3(e.lowerBound, v, 0), Vec3(e.upperBound, v, 0))
         case .depth:
             if let side, let sp = SilhouetteProfile(sketch: side), let e = sp.extent(at: sp.maxWidth.at) {
-                return (SketchPlane.side.worldPoint(Vec2(e.lowerBound, sp.maxWidth.at)), SketchPlane.side.worldPoint(Vec2(e.upperBound, sp.maxWidth.at)))
+                return (StandardPlane.side.worldPoint(Vec2(e.lowerBound, sp.maxWidth.at)), StandardPlane.side.worldPoint(Vec2(e.upperBound, sp.maxWidth.at)))
             }
             return nil
         case .baseWidth, .rimWidth:

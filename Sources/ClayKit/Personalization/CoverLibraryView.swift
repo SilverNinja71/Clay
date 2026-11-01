@@ -28,19 +28,28 @@ public struct CoverLibraryView: View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 22) {
                 VStack(spacing: 12) {
-                    CoverArtView(cover: cover, title: title, subtitle: "Clay model", thumbnail: thumbnail)
-                        .frame(width: 230, height: 230 / 0.76)
-                        .shadow(color: .black.opacity(0.25), radius: 14, y: 8)
-                        .overlay(doodlePad)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ProjectPreview(cover: cover, thumbnail: thumbnail)
+                            .frame(width: 260, height: 200)
+                            .overlay(doodlePad)
+                        Text(title.isEmpty ? "Untitled" : title)
+                            .font(.system(size: 14, weight: .semibold))
+                            .padding(12)
+                    }
+                    .frame(width: 260, alignment: .leading)
+                    .background(theme.canvas.color.opacity(0.5))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(theme.panelStroke.color))
+                    .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
                     HStack {
                         Label("Draw on the cover", systemImage: "scribble").font(.caption).foregroundStyle(theme.secondaryInk.color)
                         Spacer()
                         Button("Clear doodle") { cover.doodle = [] }.font(.caption).disabled(cover.doodle.isEmpty)
                     }
-                    .frame(width: 230)
+                    .frame(width: 260)
                 }
                 VStack(alignment: .leading, spacing: 16) {
-                    group("Cover library") {
+                    group("Cover material") {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 10)], spacing: 10) {
                             ForEach(CoverMaterial.allCases) { m in
                                 Button {

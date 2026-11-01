@@ -15,6 +15,22 @@ public struct CurveStroke: Sendable {
     }
 }
 
+/// A translucent paper sheet for a sketch plane.
+public struct PlaneVisual: Sendable {
+    public var center: Vec3
+    public var right: Vec3
+    public var up: Vec3
+    public var halfSize: Vec2
+    /// Plane-local coordinates of `center` (so grid lines sit on whole millimetres).
+    public var localCenter: Vec2
+    public var color: Vec4
+    public var active: Bool
+    public init(center: Vec3, right: Vec3, up: Vec3, halfSize: Vec2, localCenter: Vec2, color: Vec4, active: Bool) {
+        self.center = center; self.right = right; self.up = up; self.halfSize = halfSize
+        self.localCenter = localCenter; self.color = color; self.active = active
+    }
+}
+
 /// Linear-space colours the renderer needs from the active studio theme.
 public struct RenderPalette: Sendable {
     public var clay = Vec4(0.80, 0.62, 0.50, 1)
@@ -44,7 +60,10 @@ public struct RenderScene: Sendable {
     public var brush: (center: Vec3, radius: Float)?
     public var curves: [CurveStroke] = []
     public var overlayCurves: [CurveStroke] = []
+    public var planes: [PlaneVisual] = []
     public var time: Float = 0
+    /// Off-screen only: leave the background transparent (library thumbnails).
+    public var transparentBackground = false
     public init() {}
 }
 
@@ -53,7 +72,7 @@ public struct RenderScene: Sendable {
 public final class RenderPipelines {
     public let device: MTLDevice
     let queue: MTLCommandQueue
-    let bg, clay, wire, line, grid: MTLRenderPipelineState
+    let bg, clay, wire, line, grid, plane: MTLRenderPipelineState
     let depthWrite, depthRead, depthNone: MTLDepthStencilState
 
     private static var cached: RenderPipelines?
@@ -92,6 +111,7 @@ public final class RenderPipelines {
         wire = try pipeline("wire_vertex", "wire_fragment", blend: true)
         line = try pipeline("thick_vertex", "thick_fragment", blend: true)
         grid = try pipeline("grid_vertex", "grid_fragment", blend: true)
+        plane = try pipeline("plane_vertex", "plane_fragment", blend: true)
 
         func depth(_ compare: MTLCompareFunction, write: Bool) -> MTLDepthStencilState {
             let d = MTLDepthStencilDescriptor()
@@ -144,6 +164,8 @@ public final class ClayRenderer: NSObject {
     }
 
     struct Segment { var a: Vec4; var b: Vec4; var color: Vec4 }
+    /// Must match `PlaneInfo` in Shaders.swift.
+    struct PlaneInfo { var center: Vec4; var right: Vec4; var up: Vec4; var color: Vec4; var params: Vec4 }
 
     private func uniforms(_ s: RenderScene, drawable: CGSize) -> Uniforms {
         let aspect = Float(drawable.width / max(drawable.height, 1))
@@ -225,10 +247,12 @@ public final class ClayRenderer: NSObject {
         enc.setCullMode(.none)
 
         // Background
-        enc.setRenderPipelineState(gpu.bg)
-        enc.setDepthStencilState(gpu.depthNone)
-        enc.setFragmentBytes(&u, length: ulen, index: 0)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        if !s.transparentBackground {
+            enc.setRenderPipelineState(gpu.bg)
+            enc.setDepthStencilState(gpu.depthNone)
+            enc.setFragmentBytes(&u, length: ulen, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
 
         // Clay
         if let pb = positionBuffer, let nb = normalBuffer, let ib = indexBuffer, indexCount > 0 {
@@ -259,6 +283,24 @@ public final class ClayRenderer: NSObject {
             enc.setVertexBytes(&u, length: ulen, index: 2)
             enc.setFragmentBytes(&u, length: ulen, index: 0)
             enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
+
+        // Sketch-plane sheets, far to near so the translucency blends correctly.
+        if !s.planes.isEmpty {
+            let eye = s.camera.eye
+            enc.setRenderPipelineState(gpu.plane)
+            enc.setDepthStencilState(gpu.depthRead)
+            enc.setVertexBytes(&u, length: ulen, index: 2)
+            for p in s.planes.sorted(by: { simd_distance($0.center, eye) > simd_distance($1.center, eye) }) {
+                var info = PlaneInfo(center: Vec4(p.center.x, p.center.y, p.center.z, 1),
+                                     right: Vec4(p.right.x, p.right.y, p.right.z, p.halfSize.x),
+                                     up: Vec4(p.up.x, p.up.y, p.up.z, p.halfSize.y),
+                                     color: p.color,
+                                     params: Vec4(p.localCenter.x, p.localCenter.y, p.active ? 1 : 0, 0))
+                enc.setVertexBytes(&info, length: MemoryLayout<PlaneInfo>.stride, index: 3)
+                enc.setFragmentBytes(&info, length: MemoryLayout<PlaneInfo>.stride, index: 1)
+                enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            }
         }
 
         // Curves: depth-tested ones, then overlay ones on top.
@@ -301,7 +343,7 @@ public final class ClayRenderer: NSObject {
         pass.colorAttachments[0].resolveTexture = resolve
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .multisampleResolve
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: scene.transparentBackground ? 0 : 1)
         pass.depthAttachment.texture = depth
         pass.depthAttachment.clearDepth = 1
         pass.depthAttachment.loadAction = .clear

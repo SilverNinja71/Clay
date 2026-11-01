@@ -1,26 +1,26 @@
 import SwiftUI
 import simd
 
-/// The Parchment-style orthographic drawing sheet for one plane: paper, alignment guides carried
-/// over from the other view, the tutorial ghost, curves, editable points and dimensions.
+/// The Parchment-style drawing sheet for one sketch plane, seen straight on: paper, alignment
+/// guides carried over from other planes, the tutorial ghost, curves, editable points and dimensions.
 public struct OrthoSketchCanvas: View {
     let state: WorkspaceState
-    let plane: SketchPlane
+    let plane: UUID
     let theme: StudioTheme
 
-    public init(state: WorkspaceState, plane: SketchPlane, theme: StudioTheme) {
-        self.state = state; self.plane = plane; self.theme = theme
+    public init(state: WorkspaceState, planeID: UUID, theme: StudioTheme) {
+        self.state = state; self.plane = planeID; self.theme = theme
     }
 
     public var body: some View {
         GeometryReader { geo in
             let size = geo.size
             let t = state.sketchViewTransform(plane)
-            let sketch = state.timeline.sketch(plane) ?? Sketch()
-            let other = state.timeline.sketch(plane == .front ? .side : .front) ?? Sketch()
+            let info = state.timeline.plane(plane)
+            let sketch = info?.sketch ?? Sketch()
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, size in
-                    draw(&ctx, size: size, t: t, sketch: sketch, other: other)
+                    draw(&ctx, size: size, t: t, sketch: sketch, info: info)
                 }
                 PointerCaptureLayer(handlers: state.sketchHandlers(plane))
                 constraintLabels(sketch: sketch, t: t, size: size)
@@ -38,25 +38,51 @@ public struct OrthoSketchCanvas: View {
     }
 
     private var planeBadge: some View {
-        HStack(spacing: 6) {
-            Image(systemName: plane == .front ? "square.fill" : "square.lefthalf.filled")
-            Text("\(plane.title) · \(plane == .front ? "XY" : "ZY")")
+        let info = state.timeline.plane(plane)
+        let axes: String = switch info?.standard {
+        case .front?: "XY"
+        case .side?: "ZY"
+        case .top?: "XZ"
+        case nil: "positioned"
+        }
+        return HStack(spacing: 6) {
+            Image(systemName: info?.standard == .side ? "square.lefthalf.filled" : (info?.standard == nil ? "square.on.square" : "square.fill"))
+            Text("\(info?.name ?? "Plane") · \(axes)")
         }
         .font(.system(size: 12, weight: .semibold))
         .foregroundStyle(theme.ink.color.opacity(0.75))
         .padding(.horizontal, 10).padding(.vertical, 5)
         .background(Capsule().fill(theme.paper.color.opacity(0.9)))
-        .overlay(Capsule().strokeBorder(state.activePlane == plane ? theme.accent.color : theme.panelStroke.color, lineWidth: 1.5))
+        .overlay(Capsule().strokeBorder(state.activePlaneID == plane ? theme.accent.color : theme.panelStroke.color, lineWidth: 1.5))
     }
 
     // MARK: Drawing
 
-    private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: SketchViewTransform, sketch: Sketch, other: Sketch) {
+    private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: SketchViewTransform, sketch: Sketch, info: SketchPlane?) {
         PaperGridPattern.draw(in: &ctx, size: size, transform: t, style: state.document.paper, theme: theme)
         let v: (Vec2) -> CGPoint = { t.toView($0, size: size) }
 
-        // Alignment guides projected from the other orthographic view.
-        for g in SilhouetteMatcher.guides(from: other) {
+        // Front and side carry their silhouette guides across to each other.
+        var guides: [SilhouetteMatcher.Guide] = []
+        if let s = info?.standard, s != .top {
+            guides = SilhouetteMatcher.guides(from: state.timeline.sketch(s == .front ? .side : .front) ?? Sketch())
+        }
+        // Every other plane shows where it crosses this one, and where its curves pass through.
+        if let info {
+            for other in state.timeline.planes where other.id != info.id && other.isVisible && !(info.standard != nil && other.standard != nil) {
+                let g = info.guides(from: other)
+                if let (a, b) = g.line {
+                    var p = Path()
+                    p.move(to: v(a)); p.addLine(to: v(b))
+                    ctx.stroke(p, with: .color(theme.guideInk.color.opacity(0.75)), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                }
+                for m in g.marks {
+                    let q = v(m)
+                    ctx.fill(Path(ellipseIn: CGRect(x: q.x - 4, y: q.y - 4, width: 8, height: 8)), with: .color(theme.guideInk.color))
+                }
+            }
+        }
+        for g in guides {
             let y = v(Vec2(0, g.height)).y
             var p = Path()
             p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: size.width, y: y))
@@ -70,7 +96,7 @@ public struct OrthoSketchCanvas: View {
         }
 
         // Tutorial ghost.
-        if let ghost = state.tutorial?.ghost(for: plane) {
+        if let ghost = state.tutorial?.ghost(for: info?.standard) {
             let path = bezierPath(ghost, v)
             ctx.stroke(path, with: .color(theme.ghostInk.color), style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
             ctx.stroke(path, with: .color(theme.accent.color.opacity(0.7)), style: StrokeStyle(lineWidth: 1.5, dash: [6, 6]))
@@ -78,13 +104,13 @@ public struct OrthoSketchCanvas: View {
 
         // Curves (the selected one transformed live during a G/R/S modal).
         let map = state.modalMap2D()
-        let selected = state.sketchSelection?.plane == plane ? state.sketchSelection : nil
+        let selected = state.sketchSelection?.planeID == plane ? state.sketchSelection : nil
         for path in sketch.paths {
             var shown = path
             if let map, case .sketchPath(plane, path.id)? = state.modal?.target { shown = path.transformed(map) }
             let isSel = selected?.pathID == path.id
-            if !path.closed {
-                // Faint mirror: open strokes are half-profiles revolved about the axis.
+            if !path.closed && info?.standard != nil {
+                // Faint mirror: open strokes on the front/side views are half-profiles revolved about the axis.
                 let mirrored = shown.transformed { Vec2(-$0.x, $0.y) }
                 ctx.stroke(bezierPath(mirrored, v), with: .color(theme.sketchInk.color.opacity(0.18)),
                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 4]))
@@ -224,7 +250,7 @@ public struct OrthoSketchCanvas: View {
                         .help(c.title)
                 }
             }
-            .contextMenu { Button("Delete \(c.title)", role: .destructive) { state.removeConstraint(plane: plane, at: i) } }
+            .contextMenu { Button("Delete \(c.title)", role: .destructive) { state.removeConstraint(planeID: plane, at: i) } }
             .position(q)
         }
     }

@@ -48,6 +48,7 @@ public enum KeyCommand: Equatable, Sendable {
     case modalSwitch(ModalTransform.Kind)
     case brush(BrushKind), radius(bigger: Bool), strength(stronger: Bool), toggleSymmetry, remesh
     case toggleWireframe, toggleInspector
+    case addPlane, formAndSculpt
     case sketchTool(SketchTool), finishShape
     case measureTool
     case cancel
@@ -81,7 +82,7 @@ public enum BlenderKeymap {
         if ctx.modalActive { return modal(k) }
 
         switch k.key {
-        case .tab: return k.shift ? .previousMode : .nextMode
+        case .tab: return k.control ? .formAndSculpt : (k.shift ? .previousMode : .nextMode)
         case .home: return .frameAll
         case .escape: return .cancel
         case .enter: return ctx.mode == .sketch ? .finishShape : nil
@@ -99,6 +100,7 @@ public enum BlenderKeymap {
             case ("s", false): return .scale
             case ("e", false): return .extrude
             case ("d", true): return .duplicate
+            case ("a", true): return .addPlane
             case ("x", false): return .delete
             case ("w", false): return .toggleWireframe
             case ("n", false): return .toggleInspector
@@ -131,6 +133,7 @@ public enum BlenderKeymap {
             case ("r", false): return .rotate
             case ("s", false): return .scale
             case ("d", true): return .duplicate
+            case ("a", true): return .addPlane
             case ("x", false): return .delete
             case ("n", false): return .toggleInspector
             default: return nil
@@ -202,7 +205,8 @@ public struct ModalTransform: Equatable, Sendable {
     public enum Target: Equatable, Sendable {
         case body
         case duplicate(UUID)
-        case sketchPath(SketchPlane, UUID)
+        case sketchPath(UUID, UUID)      // plane id, path id
+        case plane(UUID)                 // a whole sketch plane
     }
 
     public var kind: Kind
@@ -212,6 +216,8 @@ public struct ModalTransform: Equatable, Sendable {
     public var pivot: Vec3
     public var startPointer: CGPoint
     public var pointer: CGPoint
+    /// Axes that X / Y / Z lock to (the plane gizmo uses the plane's own axes); nil = world.
+    public var basis: [Vec3]?
 
     public init(kind: Kind, target: Target, pivot: Vec3, pointer: CGPoint) {
         self.kind = kind; self.target = target; self.pivot = pivot
@@ -240,6 +246,8 @@ public struct ModalTransform: Equatable, Sendable {
 
     static func unit(_ a: Int) -> Vec3 { a == 0 ? Vec3(1, 0, 0) : (a == 1 ? Vec3(0, 1, 0) : Vec3(0, 0, 1)) }
 
+    func axisVector(_ a: Int) -> Vec3 { basis.map { $0[a] } ?? Self.unit(a) }
+
     /// Closest-point parameter on the line `p + d·t` to a ray.
     static func lineParameter(_ p: Vec3, _ d: Vec3, _ ray: Ray) -> Float? {
         let w = p - ray.origin
@@ -260,14 +268,14 @@ public struct ModalTransform: Equatable, Sendable {
             let r0 = camera.ray(at: startPointer, in: size), r1 = camera.ray(at: pointer, in: size)
             switch constraint {
             case .axis(let a):
-                let axis = Self.unit(a)
+                let axis = axisVector(a)
                 if let n { t.translation = axis * n }
                 else if let t0 = Self.lineParameter(pivot, axis, r0), let t1 = Self.lineParameter(pivot, axis, r1) {
                     t.translation = axis * (t1 - t0)
                 }
             case .plane(let a):
-                let normal = Self.unit(a)
-                if let n { t.translation = Self.unit((a + 1) % 3) * n }
+                let normal = axisVector(a)
+                if let n { t.translation = axisVector((a + 1) % 3) * n }
                 else if let p0 = r0.intersectPlane(point: pivot, normal: normal) ?? r0.intersectPlane(point: pivot, normal: -normal),
                         let p1 = r1.intersectPlane(point: pivot, normal: normal) ?? r1.intersectPlane(point: pivot, normal: -normal) {
                     var d = p1 - p0; d[a] = 0
@@ -282,8 +290,8 @@ public struct ModalTransform: Equatable, Sendable {
             }
         case .rotate:
             var axis = -camera.forward
-            if case .axis(let a) = constraint { axis = Self.unit(a) }
-            if case .plane(let a) = constraint { axis = Self.unit(a) }
+            if case .axis(let a) = constraint { axis = axisVector(a) }
+            if case .plane(let a) = constraint { axis = axisVector(a) }
             t.rotationAxis = axis
             if let n {
                 t.rotationDegrees = n
@@ -316,7 +324,11 @@ public struct ModalTransform: Equatable, Sendable {
 
     /// Point map for a sketch-plane transform. `pivot2D` is the path centre on the plane.
     public func transform2D(pivot2D: Vec2, view: SketchViewTransform, size: CGSize) -> (Vec2) -> Vec2 {
-        let p0 = view.toPlane(startPointer, size: size), p1 = view.toPlane(pointer, size: size)
+        transform2D(pivot2D: pivot2D, start: view.toPlane(startPointer, size: size), current: view.toPlane(pointer, size: size))
+    }
+
+    /// Same, from pointer positions already projected onto the plane.
+    public func transform2D(pivot2D: Vec2, start p0: Vec2, current p1: Vec2) -> (Vec2) -> Vec2 {
         let n = numericValue
         var axis2 = -1
         if case .axis(let a) = constraint { axis2 = a }

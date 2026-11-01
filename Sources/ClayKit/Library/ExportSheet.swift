@@ -115,7 +115,7 @@ struct ExportSheet: View {
             case .usdz: (data, ext) = try MeshExporter.usd(state.mesh!, name: name, color: theme.clay.linear)
             case .step: data = MeshExporter.step(state.mesh!, name: name)
             case .vector:
-                let planes: [(SketchPlane, Sketch)] = [SketchPlane.front, .side].compactMap { p in state.timeline.sketch(p).map { (p, $0) } }
+                let planes: [(String, Sketch)] = state.timeline.planes.filter(\.isVisible).map { ($0.standard?.rawValue ?? $0.name, $0.sketch) }
                 guard let svg = MeshExporter.vectorSVG(planes, name: name) else { error = "Draw something in Sketch mode first."; return }
                 data = svg
             case .svg:

@@ -6,7 +6,7 @@ public enum TutorialPhase: Int, CaseIterable, Sendable {
 }
 
 public enum TutorialEvent: Sendable {
-    case sketchCommitted(SketchPlane)
+    case sketchCommitted(StandardPlane)
     case generated
     case stroke(BrushKind)
     case dimensionChanged(ProfileDimension, Float)
@@ -66,7 +66,7 @@ public final class TutorialEngine {
         case .dimension:
             "Tap the base of the vase — its diameter reads 50 mm. Tap the label and change it to 65 mm."
         case .cover:
-            "Choose a studio cover for your notebook and save the model to your library."
+            "Choose a cover for your project card and save the model to your library."
         case .done:
             "You sketched in 2D, formed in 3D, sculpted like clay and measured with precision. Every step is in the timeline below — click any of them to change it."
         }
@@ -98,10 +98,10 @@ public final class TutorialEngine {
     public var highlightsGenerate: Bool { phase == .generate }
 
     /// The ghosted outline to trace on `plane`, if this step has one.
-    public func ghost(for plane: SketchPlane) -> SketchPath? {
+    public func ghost(for plane: StandardPlane?) -> SketchPath? {
         switch (phase, plane) {
-        case (.frontSketch, .front): VaseGuide.silhouette()
-        case (.sideSketch, .side): VaseGuide.silhouette(depthScale: 0.86)
+        case (.frontSketch, .front?): VaseGuide.silhouette()
+        case (.sideSketch, .side?): VaseGuide.silhouette(depthScale: 0.86)
         default: nil
         }
     }
@@ -135,7 +135,7 @@ public final class TutorialEngine {
         }
     }
 
-    private func sketchIsComplete(_ s: WorkspaceState, _ plane: SketchPlane) -> Bool {
+    private func sketchIsComplete(_ s: WorkspaceState, _ plane: StandardPlane) -> Bool {
         guard let sk = s.timeline.sketch(plane), let p = SilhouetteProfile(sketch: sk) else { return false }
         return p.height > 70
     }
@@ -158,11 +158,11 @@ public final class TutorialEngine {
             s.splitSketch = false
             s.sketchTool = .pencil
             s.setPlane(.front)
-            s.fitSketchView(.front)
+            s.fitSketchView(s.timeline.planeID(.front))
         case .sideSketch:
             s.sketchTool = .pencil
             withAnimation(.spring(response: 0.7, dampingFraction: 0.85)) { s.setPlane(.side) }
-            s.fitSketchView(.side)
+            s.fitSketchView(s.timeline.planeID(.side))
         case .sculpt:
             s.setMode(.sculpt)
         case .dimension:

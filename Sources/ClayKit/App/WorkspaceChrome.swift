@@ -99,15 +99,21 @@ struct ToolPalette: View {
                     }
                 }
                 divider
-                ToolButton(symbol: "square.fill", label: "Front plane (1)", isOn: !state.splitSketch && state.activePlane == .front, theme: theme) {
+                ToolButton(symbol: "cube", label: "3D view: see every plane, draw on the active one", isOn: state.sketchIn3D, theme: theme) {
+                    state.sketchIn3D.toggle()
+                    if state.sketchIn3D { state.alignView(to: state.activePlaneID) }
+                }
+                ToolButton(symbol: "square.fill", label: "Front plane (1)", isOn: !state.splitSketch && state.activePlane?.standard == .front, theme: theme) {
                     state.splitSketch = false; state.setPlane(.front)
                 }
-                ToolButton(symbol: "square.lefthalf.filled", label: "Side plane (3)", isOn: !state.splitSketch && state.activePlane == .side, theme: theme) {
+                ToolButton(symbol: "square.lefthalf.filled", label: "Side plane (3)", isOn: !state.splitSketch && state.activePlane?.standard == .side, theme: theme) {
                     state.splitSketch = false; state.setPlane(.side)
                 }
                 ToolButton(symbol: "rectangle.split.2x1", label: "Split view: front and side", isOn: state.splitSketch, theme: theme) {
                     state.splitSketch.toggle()
+                    if state.splitSketch { state.sketchIn3D = false; state.setPlane(.front) }
                 }
+                ToolButton(symbol: "plus.square.on.square", label: "Add a sketch plane (⇧A)", theme: theme) { state.addPlane() }
             case .model:
                 ForEach(ModelTool.allCases) { t in
                     ToolButton(symbol: t.symbol, label: t.title, isOn: state.modelTool == t, theme: theme) { state.modelTool = t }
@@ -153,10 +159,10 @@ struct GenerateButton: View {
 
     var body: some View {
         let highlight = state.tutorial?.highlightsGenerate ?? false
-        Button { state.generateClay() } label: {
+        Button { state.formClay() } label: {
             HStack(spacing: 10) {
-                Image(systemName: "cube.transparent.fill").font(.system(size: 18, weight: .semibold))
-                Text("Generate 3D Clay").font(.system(size: 16, weight: .bold))
+                Image(systemName: state.formsFromPlanes ? "square.3.layers.3d" : "cube.transparent.fill").font(.system(size: 18, weight: .semibold))
+                Text(state.formsFromPlanes ? "Form Clay" : "Generate 3D Clay").font(.system(size: 16, weight: .bold))
             }
             .foregroundStyle(theme.onAccent.color)
             .padding(.horizontal, 26).padding(.vertical, 14)
@@ -166,7 +172,7 @@ struct GenerateButton: View {
         }
         .buttonStyle(PressableStyle())
         .keyboardShortcut(.return, modifiers: .command)
-        .help("Loft the front and side silhouettes into a solid (⌘↩)")
+        .help(state.formsFromPlanes ? "Loft through the closed curve on every visible plane (⌘↩)" : "Loft the front and side silhouettes into a solid (⌘↩)")
         .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { pulse = true } }
     }
 }
@@ -318,6 +324,8 @@ struct ShortcutSheet: View {
         ("Sculpt: ⇧C ⇧K ⇧T ⇧S", "Clay Strips, Crease, Flatten, Scrape"),
         ("Sculpt: [ ]  ⇧[ ⇧]", "Brush radius · strength"),
         ("Sculpt: hold ⇧ / Ctrl", "Smooth / invert while stroking"),
+        ("⇧A", "Add a sketch plane (then G / R / S to place it)"),
+        ("Ctrl+Tab", "Form Clay from the planes and start sculpting"),
         ("Sketch: P ⇧P L C B V D", "Pencil, Pen, Line, Circle, Rectangle, Edit, Dimension"),
         ("Pen: click / drag", "Corner point / curve point · click the first point to close · ⏎ to finish · ⌥-drag breaks the handle"),
     ]

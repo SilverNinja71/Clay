@@ -110,7 +110,7 @@ public struct BezierAnchor: Codable, Equatable, Sendable {
     }
 }
 
-public enum SketchPlane: String, Codable, CaseIterable, Sendable {
+public enum StandardPlane: String, Codable, CaseIterable, Sendable {
     case front, side, top
 
     public var title: String {

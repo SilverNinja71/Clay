@@ -19,37 +19,46 @@ extension WorkspaceState {
     // MARK: Lookup
 
     public func sketchPath(_ sel: SketchSelection) -> SketchPath? {
-        timeline.sketch(sel.plane)?.paths.first { $0.id == sel.pathID }
+        timeline.plane(sel.planeID)?.sketch.paths.first { $0.id == sel.pathID }
     }
 
-    public func sketchViewTransform(_ plane: SketchPlane) -> SketchViewTransform {
+    public func sketchViewTransform(_ plane: UUID?) -> SketchViewTransform {
+        guard let plane else { return SketchViewTransform() }
         if let t = sketchViews[plane] { return t }
         let size = sketchCanvasSizes[plane] ?? viewportSize
         return defaultSketchView(plane, size: size)
     }
 
-    func defaultSketchView(_ plane: SketchPlane, size: CGSize) -> SketchViewTransform {
+    func defaultSketchView(_ plane: UUID, size: CGSize) -> SketchViewTransform {
         var lo = Vec2(-45, 0), hi = Vec2(45, 125)
-        for p in [SketchPlane.front, .side] {
-            if let b = timeline.sketch(p)?.bounds { lo = simd_min(lo, b.min); hi = simd_max(hi, b.max) }
+        let p = timeline.plane(plane)
+        if p?.standard != nil {
+            // Front and side share the vertical axis: frame both so they line up.
+            for s in [StandardPlane.front, .side] {
+                if let b = timeline.sketch(s)?.bounds { lo = simd_min(lo, b.min); hi = simd_max(hi, b.max) }
+            }
+        } else if let p {
+            (lo, hi) = p.sheet
         }
         // Keep the drawing clear of the floating toolbars, inspector and tutorial card.
         let right: CGFloat = showInspector ? 300 : 40
         let top: CGFloat = 90 + (tutorial != nil ? 200 : 0)
+        let isFront = p?.standard == .front
         let insets: (CGFloat, CGFloat, CGFloat, CGFloat) = splitSketch
-            ? (top, plane == .front ? 90 : 20, 120, plane == .front ? 20 : right)
+            ? (top, isFront ? 90 : 20, 120, isFront ? 20 : right)
             : (top, 90, 120, right)
         return .fitting(min: lo, max: hi, size: size, insets: insets)
     }
 
-    public func fitSketchView(_ plane: SketchPlane) {
+    public func fitSketchView(_ plane: UUID?) {
+        guard let plane else { return }
         let size = sketchCanvasSizes[plane] ?? viewportSize
         sketchViews[plane] = defaultSketchView(plane, size: size)
     }
 
     // MARK: Handlers
 
-    func sketchHandlers(_ plane: SketchPlane) -> PointerHandlers {
+    func sketchHandlers(_ plane: UUID) -> PointerHandlers {
         var h = PointerHandlers()
         h.pointer = { [weak self] e in MainActor.assumeIsolated { self?.sketchPointer(e, plane: plane) } }
         h.scroll = { [weak self] e in MainActor.assumeIsolated { self?.sketchScroll(e, plane: plane) } }
@@ -66,19 +75,19 @@ extension WorkspaceState {
         return h
     }
 
-    func zoomSketch(_ plane: SketchPlane, by f: CGFloat, at q: CGPoint) {
+    func zoomSketch(_ plane: UUID, by f: CGFloat, at q: CGPoint) {
         var t = sketchViewTransform(plane)
         t.zoom(by: f, around: q, size: sketchCanvasSizes[plane] ?? viewportSize)
         sketchViews[plane] = t
     }
 
-    func panSketch(_ plane: SketchPlane, _ dx: CGFloat, _ dy: CGFloat) {
+    func panSketch(_ plane: UUID, _ dx: CGFloat, _ dy: CGFloat) {
         var t = sketchViewTransform(plane)
         t.pan(dx: dx, dy: dy)
         sketchViews[plane] = t
     }
 
-    func sketchScroll(_ e: ScrollEvent, plane: SketchPlane) {
+    func sketchScroll(_ e: ScrollEvent, plane: UUID) {
         if !e.precise || e.modifiers.contains(.command) || e.modifiers.contains(.control) {
             let amount = e.precise ? e.delta.height * 0.01 : e.delta.height * 0.1
             zoomSketch(plane, by: exp(amount), at: e.location)
@@ -89,13 +98,13 @@ extension WorkspaceState {
 
     // MARK: Pointer
 
-    func sketchPointer(_ e: PointerEvent, plane: SketchPlane) {
+    func sketchPointer(_ e: PointerEvent, plane: UUID) {
         let size = sketchCanvasSizes[plane] ?? viewportSize
         let t = sketchViewTransform(plane)
         let p = t.toPlane(e.location, size: size)
         let snapR = Float(12 / t.scale)
         if e.device == .pencil && e.phase == .down { pencilSeen = true }
-        if e.phase == .down && activePlane != plane { activePlane = plane }
+        if e.phase == .down && activePlaneID != plane { setPlane(id: plane) }
 
         if modal != nil {
             switch e.phase {
@@ -136,7 +145,7 @@ extension WorkspaceState {
         }
     }
 
-    private func sketchDown(_ p: Vec2, plane: SketchPlane, snapR: Float, event e: PointerEvent) {
+    func sketchDown(_ p: Vec2, plane: UUID, snapR: Float, event e: PointerEvent) {
         switch sketchTool {
         case .pencil:
             liveStroke = [p]
@@ -166,7 +175,7 @@ extension WorkspaceState {
         }
     }
 
-    private func sketchDragged(_ p: Vec2, plane: SketchPlane, snapR: Float, event e: PointerEvent) {
+    func sketchDragged(_ p: Vec2, plane: UUID, snapR: Float, event e: PointerEvent) {
         switch sketchDrag {
         case .freehand?:
             if let last = liveStroke.last, simd_distance(last, p) < snapR * 0.04 { return }
@@ -179,7 +188,7 @@ extension WorkspaceState {
         case .path(let pid, let last, let started)?:
             if !started { pushUndo() }
             let d = p - last
-            liveChange { $0.editSketch(plane) { s in if let i = s.pathIndex(pid) { s.paths[i].transform { $0 + d } } } }
+            liveChange { $0.editSketch(id: plane) { s in if let i = s.pathIndex(pid) { s.paths[i].transform { $0 + d } } } }
             sketchDrag = .path(pathID: pid, last: p, started: true)
         case .erase?:
             erase(at: p, plane: plane, snapR: snapR)
@@ -190,7 +199,7 @@ extension WorkspaceState {
         }
     }
 
-    private func sketchUp(_ p: Vec2, plane: SketchPlane, snapR: Float, cancelled: Bool) {
+    func sketchUp(_ p: Vec2, plane: UUID, snapR: Float, cancelled: Bool) {
         defer { sketchDrag = nil }
         switch sketchDrag {
         case .freehand?:
@@ -213,10 +222,10 @@ extension WorkspaceState {
             if closing && !cancelled { finishPen(closed: true) }
         case .anchor(_, _, _, true)?, .path(_, _, true)?:
             // Re-solve constraints after a manual edit.
-            if !(timeline.sketch(plane)?.constraints.isEmpty ?? true) {
-                liveChange { $0.editSketch(plane) { ConstraintSolver.solve(&$0) } }
+            if !(timeline.plane(plane)?.sketch.constraints.isEmpty ?? true) {
+                liveChange { $0.editSketch(id: plane) { ConstraintSolver.solve(&$0) } }
             }
-            tutorial?.handle(.sketchCommitted(plane), in: self)
+            notifySketchCommitted(plane)
         default:
             break
         }
@@ -224,7 +233,7 @@ extension WorkspaceState {
 
     // MARK: Freehand
 
-    private func finishFreehand(plane: SketchPlane, snapR: Float) {
+    private func finishFreehand(plane: UUID, snapR: Float) {
         var pts = liveStroke
         liveStroke = []
         let length = zip(pts, pts.dropFirst()).reduce(Float(0)) { $0 + simd_distance($1.0, $1.1) }
@@ -238,7 +247,7 @@ extension WorkspaceState {
         let closed = simd_distance(pts[0], pts[pts.count - 1]) < snapR * 1.5 && length > snapR * 6
 
         var replaced: UUID?
-        if !closed, let s = timeline.sketch(plane) {
+        if !closed, let s = timeline.plane(plane)?.sketch {
             // Continue an open curve whose end is near this stroke's start (or vice versa).
             for path in s.paths where !path.closed && path.anchors.count >= 2 {
                 let poly = path.polyline(samplesPerSegment: 16)
@@ -258,7 +267,7 @@ extension WorkspaceState {
         var path = SketchPath(segments: segs, closed: nowClosed, kind: .freehand)
 
         // Tutorial: a trace close to the guide snaps onto it ("the curve snaps smooth").
-        if let ghost = tutorial?.ghost(for: plane), let gb = Optional(ghost.bounds), let pb = Optional(path.bounds),
+        if let ghost = tutorial?.ghost(for: timeline.plane(plane)?.standard), let gb = Optional(ghost.bounds), let pb = Optional(path.bounds),
            (pb.max.y - pb.min.y) > (gb.max.y - gb.min.y) * 0.6 {
             let samples = path.polyline(samplesPerSegment: 6)
             let mean = samples.reduce(Float(0)) { $0 + ghost.distance(to: $1) } / Float(max(samples.count, 1))
@@ -269,13 +278,13 @@ extension WorkspaceState {
             }
         }
         let newPath = path
-        commit { tl in tl.editSketch(plane) { s in
+        commit { tl in tl.editSketch(id: plane) { s in
             if let r = replaced, let i = s.pathIndex(r) { s.paths.remove(at: i) }
             s.paths.append(newPath)
         } }
-        sketchSelection = SketchSelection(plane: plane, pathID: newPath.id)
+        sketchSelection = SketchSelection(planeID: plane, pathID: newPath.id)
         hapticTick += 1
-        tutorial?.handle(.sketchCommitted(plane), in: self)
+        notifySketchCommitted(plane)
     }
 
     // MARK: Pen tool
@@ -315,7 +324,8 @@ extension WorkspaceState {
         let anchors = livePen
         livePen = []
         guard anchors.count >= 2 else { return }
-        addPath(SketchPath(anchors: anchors, closed: closed, kind: .pen), plane: livePlane)
+        guard let id = livePlane ?? activePlaneID else { return }
+        addPath(SketchPath(anchors: anchors, closed: closed, kind: .pen), plane: id)
     }
 
     /// Switches sketch tools, keeping any curve that was being drawn.
@@ -340,18 +350,19 @@ extension WorkspaceState {
         let pts = livePolyline
         livePolyline = []
         guard pts.count >= 2 else { return }
-        addPath(.polyline(pts, closed: closed), plane: livePlane)
+        guard let id = livePlane ?? activePlaneID else { return }
+        addPath(.polyline(pts, closed: closed), plane: id)
     }
 
-    func addPath(_ path: SketchPath, plane: SketchPlane) {
-        commit { $0.editSketch(plane) { $0.paths.append(path) } }
-        sketchSelection = SketchSelection(plane: plane, pathID: path.id)
+    func addPath(_ path: SketchPath, plane: UUID) {
+        commit { $0.editSketch(id: plane) { $0.paths.append(path) } }
+        sketchSelection = SketchSelection(planeID: plane, pathID: path.id)
         hapticTick += 1
-        tutorial?.handle(.sketchCommitted(plane), in: self)
+        notifySketchCommitted(plane)
     }
 
     /// Replaces a plane's sketch with the tutorial guide ("Show me").
-    public func applyGuideSketch(_ plane: SketchPlane, notify: Bool = true) {
+    public func applyGuideSketch(_ plane: StandardPlane, notify: Bool = true) {
         let path = plane == .side ? VaseGuide.silhouette(depthScale: 0.86) : VaseGuide.silhouette()
         commit { $0.editSketch(plane) { $0 = Sketch(paths: [path]) } }
         if mode != .sketch { setMode(.sketch) }
@@ -379,9 +390,9 @@ extension WorkspaceState {
 
     // MARK: Edit tool
 
-    private func hitAnchor(_ p: Vec2, plane: SketchPlane, snapR: Float) -> (UUID, Int, AnchorPart)? {
-        guard let s = timeline.sketch(plane) else { return nil }
-        if let sel = sketchSelection, sel.plane == plane, let path = s.paths.first(where: { $0.id == sel.pathID }) {
+    private func hitAnchor(_ p: Vec2, plane: UUID, snapR: Float) -> (UUID, Int, AnchorPart)? {
+        guard let s = timeline.plane(plane)?.sketch else { return nil }
+        if let sel = sketchSelection, sel.planeID == plane, let path = s.paths.first(where: { $0.id == sel.pathID }) {
             for (i, a) in path.anchors.enumerated() {
                 if a.inHandle != .zero, simd_distance(a.position + a.inHandle, p) < snapR { return (path.id, i, .inHandle) }
                 if a.outHandle != .zero, simd_distance(a.position + a.outHandle, p) < snapR { return (path.id, i, .outHandle) }
@@ -398,40 +409,40 @@ extension WorkspaceState {
         return best
     }
 
-    private func pathAt(_ p: Vec2, plane: SketchPlane, snapR: Float) -> SketchPath? {
-        timeline.sketch(plane)?.paths.min { $0.distance(to: p) < $1.distance(to: p) }.flatMap { $0.distance(to: p) < snapR ? $0 : nil }
+    private func pathAt(_ p: Vec2, plane: UUID, snapR: Float) -> SketchPath? {
+        timeline.plane(plane)?.sketch.paths.min { $0.distance(to: p) < $1.distance(to: p) }.flatMap { $0.distance(to: p) < snapR ? $0 : nil }
     }
 
-    private func selectPath(at p: Vec2, plane: SketchPlane, snapR: Float) {
+    private func selectPath(at p: Vec2, plane: UUID, snapR: Float) {
         if let path = pathAt(p, plane: plane, snapR: snapR) {
-            sketchSelection = SketchSelection(plane: plane, pathID: path.id)
+            sketchSelection = SketchSelection(planeID: plane, pathID: path.id)
         } else {
             sketchSelection = nil
         }
     }
 
-    private func editDown(_ p: Vec2, plane: SketchPlane, snapR: Float, modifiers: KeyModifiers) {
+    private func editDown(_ p: Vec2, plane: UUID, snapR: Float, modifiers: KeyModifiers) {
         if let (pid, idx, part) = hitAnchor(p, plane: plane, snapR: snapR) {
             if part == .point {
                 if modifiers.contains(.option) { toggleCorner(plane: plane, pid, idx); return }
-                if modifiers.contains(.shift), var sel = sketchSelection, sel.plane == plane, sel.pathID == pid {
+                if modifiers.contains(.shift), var sel = sketchSelection, sel.planeID == plane, sel.pathID == pid {
                     if let k = sel.anchors.firstIndex(of: idx) { sel.anchors.remove(at: k) } else { sel.anchors.append(idx) }
                     sketchSelection = sel
                     return
                 }
-                sketchSelection = SketchSelection(plane: plane, pathID: pid, anchors: [idx])
+                sketchSelection = SketchSelection(planeID: plane, pathID: pid, anchors: [idx])
             }
             sketchDrag = .anchor(pathID: pid, index: idx, part: part, started: false)
         } else if let path = pathAt(p, plane: plane, snapR: snapR) {
-            sketchSelection = SketchSelection(plane: plane, pathID: path.id)
+            sketchSelection = SketchSelection(planeID: plane, pathID: path.id)
             sketchDrag = .path(pathID: path.id, last: p, started: false)
         } else {
             sketchSelection = nil
         }
     }
 
-    private func moveAnchor(plane: SketchPlane, _ pid: UUID, _ idx: Int, _ part: AnchorPart, to p: Vec2) {
-        liveChange { $0.editSketch(plane) { s in
+    private func moveAnchor(plane: UUID, _ pid: UUID, _ idx: Int, _ part: AnchorPart, to p: Vec2) {
+        liveChange { $0.editSketch(id: plane) { s in
             guard let i = s.pathIndex(pid), idx < s.paths[i].anchors.count else { return }
             var a = s.paths[i].anchors[idx]
             let smooth = !a.isCorner
@@ -450,8 +461,8 @@ extension WorkspaceState {
         } }
     }
 
-    private func toggleCorner(plane: SketchPlane, _ pid: UUID, _ idx: Int) {
-        commit { $0.editSketch(plane) { s in
+    private func toggleCorner(plane: UUID, _ pid: UUID, _ idx: Int) {
+        commit { $0.editSketch(id: plane) { s in
             guard let i = s.pathIndex(pid) else { return }
             let path = s.paths[i]
             var a = path.anchors[idx]
@@ -471,10 +482,10 @@ extension WorkspaceState {
 
     // MARK: Eraser
 
-    private func erase(at p: Vec2, plane: SketchPlane, snapR: Float) {
+    private func erase(at p: Vec2, plane: UUID, snapR: Float) {
         guard let path = pathAt(p, plane: plane, snapR: snapR) else { return }
         if case .erase(false)? = sketchDrag { pushUndo(); sketchDrag = .erase(started: true) }
-        liveChange { $0.editSketch(plane) { s in
+        liveChange { $0.editSketch(id: plane) { s in
             s.paths.removeAll { $0.id == path.id }
             s.constraints.removeAll { c in c.anchorRefs.contains { $0.path == path.id } || c.circlePaths.contains(path.id) }
         } }
@@ -483,20 +494,20 @@ extension WorkspaceState {
 
     // MARK: Constraints
 
-    private func dimensionDown(_ p: Vec2, plane: SketchPlane, snapR: Float) {
+    private func dimensionDown(_ p: Vec2, plane: UUID, snapR: Float) {
         if let (pid, idx, part) = hitAnchor(p, plane: plane, snapR: snapR), part == .point {
             let ref = AnchorRef(path: pid, index: idx)
             if pendingDimensionAnchors.contains(ref) { return }
             pendingDimensionAnchors.append(ref)
-            if pendingDimensionAnchors.count == 2, let s = timeline.sketch(plane) {
+            if pendingDimensionAnchors.count == 2, let s = timeline.plane(plane)?.sketch {
                 let a = pendingDimensionAnchors[0], b = pendingDimensionAnchors[1]
                 pendingDimensionAnchors = []
                 guard let pa = position(a, in: s), let pb = position(b, in: s) else { return }
-                addConstraint(.distance(a, b, simd_distance(pa, pb)), plane: plane, edit: true)
+                addConstraint(.distance(a, b, simd_distance(pa, pb)), planeID: plane, edit: true)
             }
         } else if let path = pathAt(p, plane: plane, snapR: snapR), path.kind == .circle {
             let r = path.anchors.map { simd_distance($0.position, path.centroid) }.reduce(0, +) / Float(path.anchors.count)
-            addConstraint(.radius(path.id, r), plane: plane, edit: true)
+            addConstraint(.radius(path.id, r), planeID: plane, edit: true)
         } else {
             pendingDimensionAnchors = []
         }
@@ -507,23 +518,23 @@ extension WorkspaceState {
         return s.paths[i].anchors[r.index].position
     }
 
-    public func addConstraint(_ c: SketchConstraint, plane: SketchPlane, edit: Bool = false) {
-        commit { $0.editSketch(plane) { s in
+    public func addConstraint(_ c: SketchConstraint, planeID plane: UUID, edit: Bool = false) {
+        commit { $0.editSketch(id: plane) { s in
             s.constraints.append(c)
             ConstraintSolver.solve(&s)
         } }
-        if edit, let n = timeline.sketch(plane)?.constraints.count { editingCallout = .sketchConstraint(plane, n - 1) }
+        if edit, let n = timeline.plane(plane)?.sketch.constraints.count { editingCallout = .sketchConstraint(plane, n - 1) }
         hapticTick += 1
         showToast("\(c.title) constraint", symbol: c.symbol)
     }
 
-    public func removeConstraint(plane: SketchPlane, at i: Int) {
-        commit { $0.editSketch(plane) { s in if i < s.constraints.count { s.constraints.remove(at: i) } } }
+    public func removeConstraint(planeID plane: UUID, at i: Int) {
+        commit { $0.editSketch(id: plane) { s in if i < s.constraints.count { s.constraints.remove(at: i) } } }
     }
 
     /// Constraints that make sense for the current selection (shown in the inspector).
     public func availableConstraints() -> [SketchConstraint] {
-        guard let sel = sketchSelection, let path = sketchPath(sel), let s = timeline.sketch(sel.plane) else { return [] }
+        guard let sel = sketchSelection, let path = sketchPath(sel), let s = timeline.plane(sel.planeID)?.sketch else { return [] }
         let refs = sel.anchors.map { AnchorRef(path: sel.pathID, index: $0) }
         var out: [SketchConstraint] = []
         if path.kind == .circle && refs.isEmpty {
@@ -562,6 +573,11 @@ extension WorkspaceState {
         SilhouetteMatcher.matchHeights(front: front, side: &side)
         commit { $0.editSketch(.side) { $0 = side } }
         showToast("Side height matched to front", symbol: "arrow.up.and.down")
+    }
+
+    /// Lets the tutorial know when one of the built-in front / side sketches changed.
+    func notifySketchCommitted(_ plane: UUID) {
+        if let s = timeline.plane(plane)?.standard { tutorial?.handle(.sketchCommitted(s), in: self) }
     }
 
     // MARK: Cover

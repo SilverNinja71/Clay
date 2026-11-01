@@ -29,6 +29,21 @@ public struct ClayRootView: View {
         .preferredColorScheme(themes.current.isDark ? .dark : .light)
         .task {
             if workspace == nil && !TutorialEngine.hasCompletedOnboarding { startTutorial() }
+            await refreshOverviews()
+        }
+    }
+
+    /// Fills in stats and a fresh (transparent) thumbnail for projects saved before the
+    /// library overview existed, without changing their "edited" dates.
+    private func refreshOverviews() async {
+        for id in store.projectsNeedingOverview {
+            guard let doc = store.load(id) else { continue }
+            let ws = WorkspaceState(document: doc)
+            ws.theme = themes.current
+            var d = doc
+            d.stats = ws.projectStats
+            store.save(d, thumbnail: ws.thumbnail(), touch: false)
+            await Task.yield()
         }
     }
 

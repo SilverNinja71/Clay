@@ -60,22 +60,23 @@ public struct WorkspaceView: View {
     // MARK: Stage
 
     @ViewBuilder private func stage(_ theme: StudioTheme) -> some View {
-        if state.mode == .sketch {
+        if state.mode == .sketch && !state.sketchIn3D, let active = state.activePlaneID {
             Group {
-                if state.splitSketch {
+                if state.splitSketch, state.activePlane?.standard != nil,
+                   let front = state.timeline.planeID(.front), let side = state.timeline.planeID(.side) {
                     HStack(spacing: 3) {
-                        OrthoSketchCanvas(state: state, plane: .front, theme: theme)
-                        OrthoSketchCanvas(state: state, plane: .side, theme: theme)
+                        OrthoSketchCanvas(state: state, planeID: front, theme: theme)
+                        OrthoSketchCanvas(state: state, planeID: side, theme: theme)
                     }
                     .background(theme.panelStroke.color)
                 } else {
                     ZStack {
-                        OrthoSketchCanvas(state: state, plane: state.activePlane, theme: theme)
-                            .id(state.activePlane)
+                        OrthoSketchCanvas(state: state, planeID: active, theme: theme)
+                            .id(active)
                             .transition(.asymmetric(insertion: .modifier(active: PlaneFlip(angle: -90), identity: PlaneFlip(angle: 0)),
                                                     removal: .modifier(active: PlaneFlip(angle: 90), identity: PlaneFlip(angle: 0))))
                     }
-                    .animation(.spring(response: 0.6, dampingFraction: 0.86), value: state.activePlane)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.86), value: state.activePlaneID)
                 }
             }
             .ignoresSafeArea()

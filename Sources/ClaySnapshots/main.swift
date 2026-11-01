@@ -79,7 +79,7 @@ let renderer = ClayRenderer()!
 
 @MainActor func screen(_ s: WorkspaceState, _ name: String) {
     s.viewportSize = size
-    let viewport = s.mode == .sketch ? nil : renderer.renderImage(s.renderScene(), width: Int(size.width), height: Int(size.height))
+    let viewport = s.mode == .sketch && !s.sketchIn3D ? nil : renderer.renderImage(s.renderScene(), width: Int(size.width), height: Int(size.height))
     let view = WorkspaceView(state: s)
         .environment(themes)
         .environment(\.viewportSnapshot, viewport)
@@ -110,10 +110,10 @@ check(s.mode == .sketch && tutorial.phase == .frontSketch, "tutorial opens on th
 s.sketchTool = .pencil
 s.liveStroke = []
 let trace = VaseGuide.handTrace(wobble: 1.2)
-s.livePlane = .front
+s.livePlane = s.timeline.planeID(.front)
 screen(s, "01-front-sketch-ghost.png")
 var e = PointerEvent(phase: .down, location: .zero)
-let t = s.sketchViewTransform(.front)
+let t = s.sketchViewTransform(s.timeline.planeID(.front))
 let canvas = CGSize(width: size.width, height: size.height)
 for (i, p) in trace.enumerated() {
     e.phase = i == 0 ? .down : .dragged
@@ -206,7 +206,7 @@ check(s.brush.kind == .inflate, "I selects Inflate")
 s.handleKey(KeyStroke(.tab)); s.handleKey(KeyStroke(.tab))
 check(s.mode == .sketch, "Tab cycles on to Sketch")
 s.handleKey(.char("3"))
-check(s.activePlane == .side, "3 switches to the side plane")
+check(s.activePlane?.standard == .side, "3 switches to the side plane")
 s.setMode(.model)
 s.bodySelected = true
 s.modelTool = .rotate
@@ -233,6 +233,7 @@ for (i, m) in CoverMaterial.allCases.enumerated() {
     c.showThumbnail = i % 2 == 0
     var d = store.create(name: m.title, cover: c)
     d.timeline = s.timeline
+    d.stats = s.projectStats
     store.save(d, thumbnail: i % 2 == 0 ? s.thumbnail() : nil)
 }
 let lib = ProjectBrowserView(store: store, theme: themes.current, onOpen: { _ in }, onNew: {}, onTutorial: {})
@@ -271,7 +272,7 @@ let pen = WorkspaceState(document: store.create(name: "Leaf"))
 pen.theme = themes.current
 pen.viewportSize = size
 pen.selectSketchTool(.pen)
-let pt = pen.sketchViewTransform(.front)
+let pt = pen.sketchViewTransform(pen.timeline.planeID(.front))
 @MainActor func penEvent(_ phase: PointerEvent.Phase, _ p: Vec2) {
     pen.sketchPointerForTesting(PointerEvent(phase: phase, location: pt.toView(p, size: size)), plane: .front)
 }
@@ -284,16 +285,51 @@ screen(pen, "17-pen-tool-drawing.png")
 penEvent(.down, Vec2(0, 5)); penEvent(.up, Vec2(0, 5))
 check(pen.timeline.sketch(.front)?.paths.first?.closed == true, "pen tool closed the leaf on its first point")
 pen.selectSketchTool(.edit)
-pen.sketchSelection = pen.timeline.sketch(.front)?.paths.first.map { SketchSelection(plane: .front, pathID: $0.id) }
+pen.sketchSelection = pen.timeline.sketch(.front)?.paths.first.map { SketchSelection(planeID: pen.timeline.planeID(.front)!, pathID: $0.id) }
 screen(pen, "18-pen-tool-done.png")
-if let svg = MeshExporter.vectorSVG([(.front, pen.timeline.sketch(.front)!)], name: "Leaf") {
+if let svg = MeshExporter.vectorSVG([("front", pen.timeline.sketch(.front)!)], name: "Leaf") {
     try svg.write(to: out.appendingPathComponent("leaf-vector.svg"))
     let text = String(decoding: svg, as: UTF8.self)
     check(text.contains(" C") && !text.contains("<text") && !text.contains("<rect"), "clean SVG is only Bézier curves")
 }
 
-// 10. Other themes
-print("10. Themes")
+// 10. Positioned sketch planes → Form Clay
+print("10. Sketch planes")
+let ribs = WorkspaceState(document: store.create(name: "Ribbed Bottle"))
+ribs.theme = themes.current
+ribs.viewportSize = size
+ribs.onSave = { d, img in store.save(d, thumbnail: img) }
+var ribIDs: [UUID] = []
+for (i, (rx, rz)) in [(Float(30), Float(24)), (36, 30), (20, 17), (11, 11)].enumerated() {
+    let id = ribs.addPlane(normal: Vec3(0, 1, 0), at: Vec3(0, Float(i) * 40, 0))
+    let oval = SketchPath.circle(center: .zero, radius: rx).transformed { Vec2($0.x, $0.y * rz / rx) }
+    ribs.commit { $0.editSketch(id: id) { $0.paths = [oval] } }
+    ribIDs.append(id)
+}
+var tilt = TransformParameters()
+tilt.pivot = ribs.timeline.plane(ribIDs[3])!.origin
+tilt.rotationAxis = Vec3(1, 0, 0)
+tilt.rotationDegrees = 18
+ribs.commit { $0.editPlane(ribIDs[3]) { $0.apply(tilt) } }
+ribs.setPlane(id: ribIDs[1])
+ribs.sketchIn3D = true
+ribs.camera = OrbitCamera.preset(.threeQuarter, framing: ribs.sceneBounds)
+ribs.camera.distance *= 1.15
+ribs.sketchHover = Vec2(14, -6)
+screen(ribs, "19-planes-3d.png")
+ribs.selectSketchTool(.edit)
+ribs.setPlane(id: ribIDs[2])
+ribs.sketchIn3D = false
+ribs.fitSketchView(ribIDs[2])
+screen(ribs, "20-plane-sheet-guides.png")
+ribs.formClay()
+check(ribs.mesh?.isWatertight == true, "Form Clay through 4 planes is watertight (\(ribs.stats.triangles) triangles)")
+await settle(ribs)
+screen(ribs, "21-planes-formed.png")
+ribs.saveNow()
+
+// 11. Other themes
+print("11. Themes")
 for theme in [StudioTheme.darkSlate, .blueprint] {
     themes.current = theme
     s.theme = theme

@@ -218,5 +218,49 @@ fragment float4 grid_fragment(GridOut in [[stage_in]], constant Uniforms& u [[bu
     float3 rgb = a > 1e-4 ? (col * la) / a : float3(0.0);
     return float4(rgb, a);
 }
+
+// ---------------------------------------------------------------- sketch-plane paper sheets
+
+struct PlaneInfo {
+    float4 center;   // xyz world centre of the sheet
+    float4 right;    // xyz axis, w half width (mm)
+    float4 up;       // xyz axis, w half height (mm)
+    float4 color;
+    float4 params;   // xy plane-local coords of the centre, z = 1 when active
+};
+
+struct PlaneOut { float4 position [[position]]; float2 local; float2 corner; };
+
+vertex PlaneOut plane_vertex(uint vid [[vertex_id]],
+                             constant Uniforms& u [[buffer(2)]],
+                             constant PlaneInfo& p [[buffer(3)]]) {
+    const float2 corners[4] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
+    float2 c = corners[vid];
+    float3 w = p.center.xyz + p.right.xyz * (c.x * p.right.w) + p.up.xyz * (c.y * p.up.w);
+    PlaneOut o;
+    o.position = u.viewProj * float4(w, 1.0);
+    o.local = p.params.xy + c * float2(p.right.w, p.up.w);
+    o.corner = c;
+    return o;
+}
+
+fragment float4 plane_fragment(PlaneOut in [[stage_in]], constant PlaneInfo& p [[buffer(1)]]) {
+    bool active = p.params.z > 0.5;
+    float minor = gridLine(in.local, 10.0, 1.0) * 0.5;
+    float major = gridLine(in.local, 50.0, 1.2);
+    float2 ap = abs(in.local) / max(fwidth(in.local), float2(1e-5));
+    float axes = 1.0 - min(min(ap.x, ap.y) / 1.6, 1.0);
+    float2 edgeMM = float2(p.right.w, p.up.w) * (1.0 - abs(in.corner));
+    float2 edgePx = edgeMM / max(fwidth(in.local), float2(1e-5));
+    float border = 1.0 - smoothstep(1.0, 2.6, min(edgePx.x, edgePx.y));
+    float lines = max(max(minor, major), axes * 0.9);
+    float fillA = active ? 0.13 : 0.05;
+    float lineA = active ? 0.55 : 0.2;
+    float borderA = active ? 1.0 : 0.45;
+    float a = max(max(fillA, lines * lineA), border * borderA);
+    float3 rgb = mix(float3(1.0), p.color.rgb, active ? 0.35 : 0.2);
+    rgb = mix(rgb, p.color.rgb, max(lines * 0.7, border));
+    return float4(rgb, a * p.color.a);
+}
 """#
 }

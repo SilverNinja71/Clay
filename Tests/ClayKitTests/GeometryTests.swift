@@ -70,7 +70,7 @@ struct LoftTests {
 
     @Test func extrudeRectangle() {
         let s = Sketch(paths: [.rectangle(Vec2(-10, 0), Vec2(10, 30))])
-        let m = ExtrudeEngine.extrude(sketch: s, plane: .front, parameters: ExtrudeParameters(sketch: UUID(), depth: 8))!
+        let m = ExtrudeEngine.extrude(sketch: s, plane: .standard(.front), parameters: ExtrudeParameters(sketch: UUID(), depth: 8))!
         #expect(m.isWatertight)
         #expect(abs(m.volume - 20 * 30 * 8) < 1)
     }

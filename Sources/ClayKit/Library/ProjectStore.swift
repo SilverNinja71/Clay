@@ -49,11 +49,30 @@ public struct ClayDocument: Codable, Sendable {
     public var paper: PaperStyle
     public var timeline: Timeline
     public var camera: OrbitCamera?
+    /// Body measurements at the last save, for the library overview.
+    public var stats: ProjectStats?
 
     public init(name: String, cover: ProjectCover = ProjectCover()) {
         id = UUID(); self.name = name; created = Date(); modified = Date()
         self.cover = cover; units = .mm; paper = .grid; timeline = .starter()
     }
+}
+
+/// What the library shows about a project's 3D body.
+public struct ProjectStats: Codable, Equatable, Sendable {
+    public var size: Vec3
+    public var triangles: Int
+    public var volume: Float
+    public var watertight: Bool
+    public init(size: Vec3, triangles: Int, volume: Float, watertight: Bool) {
+        self.size = size; self.triangles = triangles; self.volume = volume; self.watertight = watertight
+    }
+}
+
+/// One timeline step, as shown in a project's overview.
+public struct ProjectStepInfo: Codable, Equatable, Sendable {
+    public var name: String
+    public var symbol: String
 }
 
 public struct ProjectSummary: Codable, Identifiable, Equatable, Sendable {
@@ -62,6 +81,13 @@ public struct ProjectSummary: Codable, Identifiable, Equatable, Sendable {
     public var modified: Date
     public var cover: ProjectCover
     public var featureCount: Int
+    public var stats: ProjectStats?
+    public var steps: [ProjectStepInfo]?
+    public var units: LengthUnit?
+    /// 2 = transparent-background thumbnail with stats filled in.
+    public var overviewVersion: Int?
+
+    public var isSculpted: Bool { steps?.contains { $0.symbol == FeatureKind.sculptSymbol } ?? false }
 }
 
 // MARK: - Store
@@ -109,16 +135,25 @@ public final class ProjectStore {
         return try? JSONDecoder().decode(ClayDocument.self, from: data)
     }
 
-    public func save(_ doc: ClayDocument, thumbnail: CGImage? = nil) {
+    /// Saves the document. `touch: false` keeps the modified date (background upgrades).
+    public func save(_ doc: ClayDocument, thumbnail: CGImage? = nil, touch: Bool = true) {
         var d = doc
-        d.modified = Date()
+        if touch { d.modified = Date() }
         if let data = try? JSONEncoder().encode(d) { try? data.write(to: docURL(d.id), options: .atomic) }
         if let thumbnail { writeThumbnail(thumbnail, id: d.id) }
-        let summary = ProjectSummary(id: d.id, name: d.name, modified: d.modified, cover: d.cover, featureCount: d.timeline.features.count)
+        let steps = d.timeline.features.filter { f in
+            if case .sketch(let s) = f.kind { return !s.sketch.isEmpty }
+            return true
+        }.map { ProjectStepInfo(name: $0.name, symbol: $0.kind.symbol) }
+        let summary = ProjectSummary(id: d.id, name: d.name, modified: d.modified, cover: d.cover, featureCount: d.timeline.features.count,
+                                     stats: d.stats, steps: steps, units: d.units, overviewVersion: 2)
         if let i = projects.firstIndex(where: { $0.id == d.id }) { projects[i] = summary } else { projects.insert(summary, at: 0) }
         projects.sort { $0.modified > $1.modified }
         saveIndex()
     }
+
+    /// Projects saved before the overview existed (no stats, opaque thumbnail).
+    public var projectsNeedingOverview: [UUID] { projects.filter { ($0.overviewVersion ?? 0) < 2 }.map(\.id) }
 
     public func create(name: String, cover: ProjectCover = ProjectCover()) -> ClayDocument {
         let doc = ClayDocument(name: name, cover: cover)

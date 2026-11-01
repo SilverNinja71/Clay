@@ -15,7 +15,7 @@ struct SketchToolTests {
     }
 
     private func send(_ phase: PointerEvent.Phase, _ p: Vec2, clicks: Int = 1, option: Bool = false) {
-        var e = PointerEvent(phase: phase, location: state.sketchViewTransform(.front).toView(p, size: state.viewportSize))
+        var e = PointerEvent(phase: phase, location: state.sketchViewTransform(state.timeline.planeID(.front)).toView(p, size: state.viewportSize))
         e.clickCount = clicks
         if option { e.modifiers = .option }
         state.sketchPointerForTesting(e, plane: .front)
@@ -70,7 +70,7 @@ struct SketchToolTests {
     }
 
     @Test func cleanSVGHasOnlyCurves() throws {
-        let data = try #require(MeshExporter.vectorSVG([(.front, VaseGuide.frontSketch), (.side, VaseGuide.sideSketch)], name: "Vase"))
+        let data = try #require(MeshExporter.vectorSVG([("front", VaseGuide.frontSketch), ("side", VaseGuide.sideSketch)], name: "Vase"))
         let svg = String(decoding: data, as: UTF8.self)
         #expect(svg.components(separatedBy: "<path").count - 1 == 2)
         #expect(!svg.contains("<rect") && !svg.contains("<text"))
@@ -80,6 +80,6 @@ struct SketchToolTests {
         let fb = try #require(VaseGuide.frontSketch.bounds), sb = try #require(VaseGuide.sideSketch.bounds)
         let expected = (fb.max.x - fb.min.x) + 20 + (sb.max.x - sb.min.x) + 4
         #expect(svg.contains("width=\"\(String(format: "%.2f", expected))mm\""))
-        #expect(MeshExporter.vectorSVG([(.front, Sketch())], name: "Empty") == nil)
+        #expect(MeshExporter.vectorSVG([("front", Sketch())], name: "Empty") == nil)
     }
 }
