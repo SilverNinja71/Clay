@@ -61,12 +61,20 @@ swift run ClaySnapshots /tmp/clay   # drives the whole tutorial headlessly; writ
 ## iPad
 
 All iPad code paths (touch, Apple Pencil pressure, hover, pinch, multi-finger taps, hardware
-keyboard) are written, but they **have not been compiled yet** — the Mac this was built on has no
-iOS SDK. To build for iPad you need the full Xcode app:
+keyboard) are written and **compile against the real iOS SDK** — GitHub Actions checks this on every
+push (see below). They haven't been tried by hand on a real iPad yet. To run it on an iPad you need
+the full Xcode app on a Mac:
 
 1. Xcode → File → New → Project → iOS **App** named `Clay` (SwiftUI, iPadOS 17+).
 2. File → Add Package Dependencies → **Add Local…** → choose this folder, and add `ClayKit` to the app target.
 3. Replace the generated `ClayApp.swift` with `Sources/ClayMac/ClayApp.swift`, then run on an iPad or simulator.
+
+## Automatic builds (GitHub Actions)
+
+Every push runs [`.github/workflows/build.yml`](.github/workflows/build.yml) on GitHub's Mac machines:
+`swift build` + `swift test` for the Mac, and an `xcodebuild` of `ClayKit` (plus a type-check of the
+app entry point) for iPad. Results are in the repo's **Actions** tab — handy when working from an iPad
+or a non-Mac computer.
 
 ## Known limits
 

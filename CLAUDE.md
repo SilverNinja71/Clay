@@ -29,6 +29,10 @@ Scripts/build-app.sh                        # Clay.app (do not `open` it while t
   drawing an `NSHostingView` in a window that is never put on screen (SwiftUI's `ImageRenderer`
   can't draw native controls); the Metal viewport is swapped for an off-screen render through the
   `viewportSnapshot` environment value. Look at the PNGs with Read.
+- **CI**: `.github/workflows/build.yml` runs on every push (GitHub's macOS runners, Xcode 16):
+  Mac `swift build` + `swift test`, and an iOS `xcodebuild -scheme ClayKit` + type-check of
+  `ClayApp.swift`. From a session without a Mac (cloud / Linux / iPad), push and read the run's result
+  and job logs through the GitHub tools — that is the only real compiler available there.
 - Package: `swift-tools-version: 5.10` (Swift 5 mode on purpose). Platforms macOS 14, iOS 17.
   `ClayMac` needs `-parse-as-library` because its only file uses `@main`.
 - The machine this started on has only the Command Line Tools: no iOS SDK and no offline `metal`
@@ -62,8 +66,8 @@ Everything in SPEC.md has a working implementation on macOS, checked headlessly.
 
 1. **Hands-on use of the live app** (real mouse/trackpad/keyboard events in the Metal view, hover
    brush cursor, gizmo drags, file export dialogs). Only logic and layout were checked automatically.
-2. **iPad build**: iOS code paths (`#if os(iOS)` in PointerInput, KeyboardShortcutManager,
-   ClayViewportView, WorkspaceView) were never compiled. Needs full Xcode; see README "iPad".
+2. **iPad on a real device**: iOS code paths (`#if os(iOS)` in PointerInput, KeyboardShortcutManager,
+   ClayViewportView, WorkspaceView) now compile in CI, but nobody has run them on an iPad yet.
 
 ## Ideas for next steps
 
