@@ -1,0 +1,49 @@
+# Builds and tests Clay on GitHub's Mac machines every time code is pushed.
+# This is how changes made from a non-Mac computer (or an iPad) get checked:
+# open the repo's "Actions" tab on github.com to see the results.
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    name: Mac build + tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Swift version
+        run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+
+  ipad:
+    name: iPad build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ClayKit for iPad
+        # Compiles every `#if os(iOS)` code path against the real iOS SDK.
+        # No signing: this only checks that the code compiles.
+        run: |
+          xcodebuild build \
+            -scheme ClayKit \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .derived \
+            CODE_SIGNING_ALLOWED=NO | tail -200
+          exit ${PIPESTATUS[0]}
+      - name: Type-check the app entry point for iPad
+        # The app's @main file lives in an executable target, which SwiftPM
+        # can't build for iOS, so compile it against the built ClayKit module.
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          MODS=.derived/Build/Products/Debug-iphoneos
+          ls "$MODS"
+          xcrun --sdk iphoneos swiftc -typecheck -parse-as-library \
+            -target arm64-apple-ios17.0 -sdk "$SDK" \
+            -I "$MODS" -F "$MODS" \
+            Sources/ClayMac/ClayApp.swift
